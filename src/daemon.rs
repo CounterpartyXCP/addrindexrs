@@ -1,7 +1,7 @@
 use base64;
 use bitcoin::blockdata::block::{Block, BlockHeader};
 use bitcoin::blockdata::transaction::Transaction;
-use bitcoin::consensus::encode::{deserialize, serialize};
+use bitcoin::consensus::encode::deserialize;
 use bitcoin::network::constants::Network;
 use bitcoin::util::hash::BitcoinHash;
 use bitcoin_hashes::hex::{FromHex, ToHex};

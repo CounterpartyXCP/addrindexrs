@@ -1,5 +1,4 @@
-use bitcoin::blockdata::transaction::Transaction;
-use bitcoin::consensus::encode::{deserialize, serialize};
+use bitcoin::consensus::encode::serialize;
 use bitcoin_hashes::hex::{FromHex, ToHex};
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
 use error_chain::ChainedError;
@@ -14,7 +13,7 @@ use std::thread;
 
 use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
-use crate::query::{Query, Status};
+use crate::query::Query;
 use crate::util::{spawn_thread, Channel, HeaderEntry, SyncChannel};
 
 const ELECTRS_VERSION: &str = env!("CARGO_PKG_VERSION");
