@@ -125,6 +125,8 @@ impl Tracker {
             }
         };
 
+        trace!("updated mempool with {} transactions from daemon", txs.len());
+
         for (txid, tx) in txids.into_iter().zip(txs.into_iter()) {
             assert_eq!(tx.txid(), *txid);
             self.add(txid, tx);
