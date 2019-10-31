@@ -12,12 +12,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::errors::*;
-use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
 use crate::query::Query;
 use crate::util::{spawn_thread, Channel, HeaderEntry, SyncChannel};
 
 const ELECTRS_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "1.4";
+
 
 // TODO: Sha256dHash should be a generic hash-container (since script hash is single SHA256)
 fn hash_from_value(val: Option<&Value>) -> Result<Sha256dHash> {
@@ -34,7 +34,6 @@ struct Connection {
     stream: TcpStream,
     addr: SocketAddr,
     chan: SyncChannel<Message>,
-    stats: Arc<Stats>,
 }
 
 impl Connection {
@@ -42,7 +41,6 @@ impl Connection {
         query: Arc<Query>,
         stream: TcpStream,
         addr: SocketAddr,
-        stats: Arc<Stats>,
     ) -> Connection {
         Connection {
             query,
@@ -51,7 +49,6 @@ impl Connection {
             stream,
             addr,
             chan: SyncChannel::new(10),
-            stats,
         }
     }
 
@@ -75,18 +72,12 @@ impl Connection {
     }
 
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
-        let timer = self
-            .stats
-            .latency
-            .with_label_values(&[method])
-            .start_timer();
         let result = match method {
             "blockchain.scripthash.get_history" => self.blockchain_scripthash_get_history(&params),
             "server.ping" => Ok(Value::Null),
             "server.version" => self.server_version(),
             &_ => bail!("unknown method {} {:?}", method, params),
         };
-        timer.observe_duration();
         // TODO: return application errors should be sent to the client
         Ok(match result {
             Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
@@ -104,11 +95,6 @@ impl Connection {
     }
 
     fn update_subscriptions(&mut self) -> Result<Vec<Value>> {
-        let timer = self
-            .stats
-            .latency
-            .with_label_values(&["periodic_update"])
-            .start_timer();
         let mut result = vec![];
         if let Some(ref mut last_entry) = self.last_header_entry {
             let entry = self.query.get_best_header()?;
@@ -134,10 +120,6 @@ impl Connection {
                 "params": [script_hash.to_hex(), new_status_hash]}));
             *status_hash = new_status_hash;
         }
-        timer.observe_duration();
-        self.stats
-            .subscriptions
-            .set(self.status_hashes.len() as i64);
         Ok(result)
     }
 
@@ -248,11 +230,6 @@ pub struct RPC {
     server: Option<thread::JoinHandle<()>>, // so we can join the server while dropping this ojbect
 }
 
-struct Stats {
-    latency: HistogramVec,
-    subscriptions: Gauge,
-}
-
 impl RPC {
     fn start_notifier(
         notification: Channel<Notification>,
@@ -300,18 +277,9 @@ impl RPC {
         chan
     }
 
-    pub fn start(addr: SocketAddr, query: Arc<Query>, metrics: &Metrics) -> RPC {
-        let stats = Arc::new(Stats {
-            latency: metrics.histogram_vec(
-                HistogramOpts::new("electrs_electrum_rpc", "Electrum RPC latency (seconds)"),
-                &["method"],
-            ),
-            subscriptions: metrics.gauge(MetricOpts::new(
-                "electrs_electrum_subscriptions",
-                "# of Electrum subscriptions",
-            )),
-        });
+    pub fn start(addr: SocketAddr, query: Arc<Query>) -> RPC {
         let notification = Channel::unbounded();
+
         RPC {
             notification: notification.sender(),
             server: Some(spawn_thread("rpc", move || {
@@ -322,10 +290,9 @@ impl RPC {
                 while let Some((stream, addr)) = acceptor.receiver().recv().unwrap() {
                     let query = query.clone();
                     let senders = senders.clone();
-                    let stats = stats.clone();
                     children.push(spawn_thread("peer", move || {
                         info!("[{}] connected peer", addr);
-                        let conn = Connection::new(query, stream, addr, stats);
+                        let conn = Connection::new(query, stream, addr);
                         senders.lock().unwrap().push(conn.chan.sender());
                         conn.run();
                         info!("[{}] disconnected peer", addr);

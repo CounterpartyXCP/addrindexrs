@@ -66,7 +66,7 @@ fn run_server(config: &Config) -> Result<()> {
         app.update(&signal)?;
         query.update_mempool()?;
         server
-            .get_or_insert_with(|| RPC::start(config.electrum_rpc_addr, query.clone(), &metrics))
+            .get_or_insert_with(|| RPC::start(config.electrum_rpc_addr, query.clone()))
             .notify(); // update subscribed clients
         if let Err(err) = signal.wait(Duration::from_secs(5)) {
             info!("stopping server: {}", err);
