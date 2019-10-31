@@ -135,7 +135,7 @@ impl Query {
     ) -> Arc<Query> {
         Arc::new(Query {
             app,
-            tracker: RwLock::new(Tracker::new(metrics)),
+            tracker: RwLock::new(Tracker::new()),
             tx_cache,
             txid_limit,
             duration: metrics.histogram_vec(

@@ -4,16 +4,13 @@ use hex;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::iter::FromIterator;
 use std::ops::Bound;
-use std::sync::Mutex;
 
 use crate::daemon::{Daemon, MempoolEntry};
 use crate::errors::*;
 use crate::index::index_transaction;
-use crate::metrics::{
-    Gauge, GaugeVec, HistogramOpts, HistogramTimer, HistogramVec, MetricOpts, Metrics,
-};
 use crate::store::{ReadStore, Row};
 use crate::util::Bytes;
+
 
 struct MempoolStore {
     map: BTreeMap<Bytes, Vec<Bytes>>,
@@ -67,6 +64,7 @@ impl ReadStore for MempoolStore {
     fn get(&self, key: &[u8]) -> Option<Bytes> {
         Some(self.map.get(key)?.last()?.to_vec())
     }
+
     fn scan(&self, prefix: &[u8]) -> Vec<Row> {
         let range = self
             .map
@@ -92,84 +90,16 @@ struct Item {
     entry: MempoolEntry, // caches mempool fee rates
 }
 
-struct Stats {
-    count: Gauge,
-    update: HistogramVec,
-    vsize: GaugeVec,
-    max_fee_rate: Mutex<f32>,
-}
-
-impl Stats {
-    fn start_timer(&self, step: &str) -> HistogramTimer {
-        self.update.with_label_values(&[step]).start_timer()
-    }
-
-    fn update(&self, entries: &[&MempoolEntry]) {
-        let mut bands: Vec<(f32, u32)> = vec![];
-        let mut fee_rate = 1.0f32; // [sat/vbyte]
-        let mut vsize = 0u32; // vsize of transactions paying <= fee_rate
-        for e in entries {
-            while fee_rate < e.fee_per_vbyte() {
-                bands.push((fee_rate, vsize));
-                fee_rate *= 2.0;
-            }
-            vsize += e.vsize();
-        }
-        let mut max_fee_rate = self.max_fee_rate.lock().unwrap();
-        loop {
-            bands.push((fee_rate, vsize));
-            if fee_rate < *max_fee_rate {
-                fee_rate *= 2.0;
-                continue;
-            }
-            *max_fee_rate = fee_rate;
-            break;
-        }
-        drop(max_fee_rate);
-        for (fee_rate, vsize) in bands {
-            // labels should be ordered by fee_rate value
-            let label = format!("≤{:10.0}", fee_rate);
-            self.vsize
-                .with_label_values(&[&label])
-                .set(f64::from(vsize));
-        }
-    }
-}
-
 pub struct Tracker {
     items: HashMap<Sha256dHash, Item>,
     index: MempoolStore,
-    histogram: Vec<(f32, u32)>,
-    stats: Stats,
 }
 
 impl Tracker {
-    pub fn new(metrics: &Metrics) -> Tracker {
+    pub fn new() -> Tracker {
         Tracker {
             items: HashMap::new(),
             index: MempoolStore::new(),
-            histogram: vec![],
-            stats: Stats {
-                count: metrics.gauge(MetricOpts::new(
-                    "electrs_mempool_count",
-                    "# of mempool transactions",
-                )),
-                update: metrics.histogram_vec(
-                    HistogramOpts::new(
-                        "electrs_mempool_update",
-                        "Time to update mempool (in seconds)",
-                    ),
-                    &["step"],
-                ),
-                vsize: metrics.gauge_vec(
-                    MetricOpts::new(
-                        "electrs_mempool_vsize",
-                        "Total vsize of transactions paying at most given fee rate",
-                    ),
-                    &["fee_rate"],
-                ),
-                max_fee_rate: Mutex::new(1.0),
-            },
         }
     }
 
@@ -182,15 +112,14 @@ impl Tracker {
     }
 
     pub fn update(&mut self, daemon: &Daemon) -> Result<()> {
-        let timer = self.stats.start_timer("fetch");
         let new_txids = daemon
             .getmempooltxids()
             .chain_err(|| "failed to update mempool from daemon")?;
-        let old_txids = HashSet::from_iter(self.items.keys().cloned());
-        timer.observe_duration();
 
-        let timer = self.stats.start_timer("add");
+        let old_txids = HashSet::from_iter(self.items.keys().cloned());
+
         let txids_iter = new_txids.difference(&old_txids);
+
         let entries: Vec<(&Sha256dHash, MempoolEntry)> = txids_iter
             .filter_map(|txid| {
                 match daemon.getmempoolentry(txid) {
@@ -202,6 +131,7 @@ impl Tracker {
                 }
             })
             .collect();
+
         if !entries.is_empty() {
             let txids: Vec<&Sha256dHash> = entries.iter().map(|(txid, _)| *txid).collect();
             let txs = match daemon.gettransactions(&txids) {
@@ -216,15 +146,11 @@ impl Tracker {
                 self.add(txid, tx, entry);
             }
         }
-        timer.observe_duration();
 
-        let timer = self.stats.start_timer("remove");
         for txid in old_txids.difference(&new_txids) {
             self.remove(txid);
         }
-        timer.observe_duration();
 
-        self.stats.count.set(self.items.len() as i64);
         Ok(())
     }
 
