@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::iter::FromIterator;
 use std::ops::Bound;
 
-use crate::daemon::{Daemon, MempoolEntry};
+use crate::daemon::Daemon;
 use crate::errors::*;
 use crate::index::index_transaction;
 use crate::store::{ReadStore, Row};
@@ -85,13 +85,8 @@ impl ReadStore for MempoolStore {
     }
 }
 
-struct Item {
-    tx: Transaction,     // stored for faster retrieval and index removal
-    entry: MempoolEntry, // caches mempool fee rates
-}
-
 pub struct Tracker {
-    items: HashMap<Sha256dHash, Item>,
+    items: HashMap<Sha256dHash, Transaction>,
     index: MempoolStore,
 }
 
@@ -104,7 +99,7 @@ impl Tracker {
     }
 
     pub fn get_txn(&self, txid: &Sha256dHash) -> Option<Transaction> {
-        self.items.get(txid).map(|stats| stats.tx.clone())
+        self.items.get(txid).map(|tx| tx.clone())
     }
 
     pub fn index(&self) -> &dyn ReadStore {
@@ -120,31 +115,19 @@ impl Tracker {
 
         let txids_iter = new_txids.difference(&old_txids);
 
-        let entries: Vec<(&Sha256dHash, MempoolEntry)> = txids_iter
-            .filter_map(|txid| {
-                match daemon.getmempoolentry(txid) {
-                    Ok(entry) => Some((txid, entry)),
-                    Err(err) => {
-                        warn!("no mempool entry {}: {}", txid, err); // e.g. new block or RBF
-                        None // ignore this transaction for now
-                    }
-                }
-            })
-            .collect();
+        let txids: Vec<&Sha256dHash> = txids_iter.collect();
 
-        if !entries.is_empty() {
-            let txids: Vec<&Sha256dHash> = entries.iter().map(|(txid, _)| *txid).collect();
-            let txs = match daemon.gettransactions(&txids) {
-                Ok(txs) => txs,
-                Err(err) => {
-                    warn!("failed to get transactions {:?}: {}", txids, err); // e.g. new block or RBF
-                    return Ok(()); // keep the mempool until next update()
-                }
-            };
-            for ((txid, entry), tx) in entries.into_iter().zip(txs.into_iter()) {
-                assert_eq!(tx.txid(), *txid);
-                self.add(txid, tx, entry);
+        let txs = match daemon.gettransactions(&txids) {
+            Ok(txs) => txs,
+            Err(err) => {
+                warn!("failed to get transactions {:?}: {}", txids, err); // e.g. new block or RBF
+                return Ok(()); // keep the mempool until next update()
             }
+        };
+
+        for (txid, tx) in txids.into_iter().zip(txs.into_iter()) {
+            assert_eq!(tx.txid(), *txid);
+            self.add(txid, tx);
         }
 
         for txid in old_txids.difference(&new_txids) {
@@ -154,16 +137,16 @@ impl Tracker {
         Ok(())
     }
 
-    fn add(&mut self, txid: &Sha256dHash, tx: Transaction, entry: MempoolEntry) {
+    fn add(&mut self, txid: &Sha256dHash, tx: Transaction) {
         self.index.add(&tx);
-        self.items.insert(*txid, Item { tx, entry });
+        self.items.insert(*txid, tx);
     }
 
     fn remove(&mut self, txid: &Sha256dHash) {
-        let stats = self
+        let tx = self
             .items
             .remove(txid)
             .unwrap_or_else(|| panic!("missing mempool tx {}", txid));
-        self.index.remove(&stats.tx);
+        self.index.remove(&tx);
     }
 }

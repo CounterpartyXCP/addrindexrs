@@ -115,34 +115,6 @@ struct NetworkInfo {
     subversion: String,
 }
 
-pub struct MempoolEntry {
-    fee: u64,   // in satoshis
-    vsize: u32, // in virtual bytes (= weight/4)
-    fee_per_vbyte: f32,
-}
-
-impl MempoolEntry {
-    fn new(fee: u64, vsize: u32) -> MempoolEntry {
-        MempoolEntry {
-            fee,
-            vsize,
-            fee_per_vbyte: fee as f32 / vsize as f32,
-        }
-    }
-
-    pub fn fee_per_vbyte(&self) -> f32 {
-        self.fee_per_vbyte
-    }
-
-    pub fn fee(&self) -> u64 {
-        self.fee
-    }
-
-    pub fn vsize(&self) -> u32 {
-        self.vsize
-    }
-}
-
 pub trait CookieGetter: Send + Sync {
     fn get(&self) -> Result<Vec<u8>>;
 }
@@ -564,23 +536,6 @@ impl Daemon {
             result.insert(parse_hash(&value).chain_err(|| "invalid txid")?);
         }
         Ok(result)
-    }
-
-    pub fn getmempoolentry(&self, txid: &Sha256dHash) -> Result<MempoolEntry> {
-        let entry = self.request("getmempoolentry", json!([txid.to_hex()]))?;
-        let fee = (entry
-            .get("fee")
-            .chain_err(|| "missing fee")?
-            .as_f64()
-            .chain_err(|| "non-float fee")?
-            * 100_000_000f64) as u64;
-        let vsize = entry
-            .get("size")
-            .or_else(|| entry.get("vsize")) // (https://github.com/bitcoin/bitcoin/pull/15637)
-            .chain_err(|| "missing vsize")?
-            .as_u64()
-            .chain_err(|| "non-integer vsize")? as u32;
-        Ok(MempoolEntry::new(fee, vsize))
     }
 
     fn get_all_headers(&self, tip: &Sha256dHash) -> Result<Vec<BlockHeader>> {
