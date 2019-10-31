@@ -17,7 +17,6 @@ pub mod cache;
 pub mod config;
 pub mod daemon;
 pub mod errors;
-pub mod fake;
 pub mod index;
 pub mod mempool;
 pub mod metrics;
