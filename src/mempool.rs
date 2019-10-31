@@ -15,8 +15,6 @@ use crate::metrics::{
 use crate::store::{ReadStore, Row};
 use crate::util::Bytes;
 
-const VSIZE_BIN_WIDTH: u32 = 100_000; // in vbytes
-
 struct MempoolStore {
     map: BTreeMap<Bytes, Vec<Bytes>>,
 }
