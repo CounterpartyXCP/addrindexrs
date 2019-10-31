@@ -62,24 +62,6 @@ impl Status {
         txns
     }
 
-    pub fn unspent(&self) -> Vec<&FundingOutput> {
-        let mut outputs_map = HashMap::<OutPoint, &FundingOutput>::new();
-        for f in self.funding() {
-            outputs_map.insert((f.txn_id, f.output_index), f);
-        }
-        for s in self.spending() {
-            if outputs_map.remove(&s.funding_output).is_none() {
-                warn!("failed to remove {:?}", s.funding_output);
-            }
-        }
-        let mut outputs = outputs_map
-            .into_iter()
-            .map(|item| item.1) // a reference to unspent output
-            .collect::<Vec<&FundingOutput>>();
-        outputs.sort_unstable_by_key(|out| out.height);
-        outputs
-    }
-
     pub fn hash(&self) -> Option<FullHash> {
         let txns = self.history();
         if txns.is_empty() {
@@ -100,32 +82,6 @@ impl Status {
 struct TxnHeight {
     txn: Transaction,
     height: u32,
-}
-
-fn merklize(left: Sha256dHash, right: Sha256dHash) -> Sha256dHash {
-    let data = [&left[..], &right[..]].concat();
-    Sha256dHash::hash(&data)
-}
-
-fn create_merkle_branch_and_root(
-    mut hashes: Vec<Sha256dHash>,
-    mut index: usize,
-) -> (Vec<Sha256dHash>, Sha256dHash) {
-    let mut merkle = vec![];
-    while hashes.len() > 1 {
-        if hashes.len() % 2 != 0 {
-            let last = *hashes.last().unwrap();
-            hashes.push(last);
-        }
-        index = if index % 2 == 0 { index + 1 } else { index - 1 };
-        merkle.push(hashes[index]);
-        index /= 2;
-        hashes = hashes
-            .chunks(2)
-            .map(|pair| merklize(pair[0], pair[1]))
-            .collect()
-    }
-    (merkle, hashes[0])
 }
 
 // TODO: the functions below can be part of ReadStore.
