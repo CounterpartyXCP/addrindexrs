@@ -137,7 +137,6 @@ pub struct Config {
     pub bulk_index_threads: usize,
     pub tx_cache_size: usize,
     pub txid_limit: usize,
-    pub server_banner: String,
     pub blocktxids_cache_size: usize,
 }
 
@@ -250,7 +249,6 @@ impl Config {
             tx_cache_size: (config.tx_cache_size_mb * MB) as usize,
             blocktxids_cache_size: (config.blocktxids_cache_size_mb * MB) as usize,
             txid_limit: config.txid_limit,
-            server_banner: config.server_banner,
         };
         eprintln!("{:?}", config);
         config

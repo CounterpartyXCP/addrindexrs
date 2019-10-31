@@ -179,13 +179,6 @@ impl Tracker {
         self.items.get(txid).map(|stats| stats.tx.clone())
     }
 
-    /// Returns vector of (fee_rate, vsize) pairs, where fee_{n-1} > fee_n and vsize_n is the
-    /// total virtual size of mempool transactions with fee in the bin [fee_{n-1}, fee_n].
-    /// Note: fee_{-1} is implied to be infinite.
-    pub fn fee_histogram(&self) -> &Vec<(f32, u32)> {
-        &self.histogram
-    }
-
     pub fn index(&self) -> &dyn ReadStore {
         &self.index
     }
@@ -233,10 +226,6 @@ impl Tracker {
         }
         timer.observe_duration();
 
-        let timer = self.stats.start_timer("fees");
-        self.update_fee_histogram();
-        timer.observe_duration();
-
         self.stats.count.set(self.items.len() as i64);
         Ok(())
     }
@@ -253,32 +242,4 @@ impl Tracker {
             .unwrap_or_else(|| panic!("missing mempool tx {}", txid));
         self.index.remove(&stats.tx);
     }
-
-    fn update_fee_histogram(&mut self) {
-        let mut entries: Vec<&MempoolEntry> = self.items.values().map(|stat| &stat.entry).collect();
-        entries.sort_unstable_by(|e1, e2| {
-            e1.fee_per_vbyte().partial_cmp(&e2.fee_per_vbyte()).unwrap()
-        });
-        self.histogram = electrum_fees(&entries);
-        self.stats.update(&entries);
-    }
-}
-
-fn electrum_fees(entries: &[&MempoolEntry]) -> Vec<(f32, u32)> {
-    let mut histogram = vec![];
-    let mut bin_size = 0;
-    let mut last_fee_rate = None;
-    for e in entries.iter().rev() {
-        last_fee_rate = Some(e.fee_per_vbyte());
-        bin_size += e.vsize();
-        if bin_size > VSIZE_BIN_WIDTH {
-            // vsize of transactions paying >= e.fee_per_vbyte()
-            histogram.push((e.fee_per_vbyte(), bin_size));
-            bin_size = 0;
-        }
-    }
-    if let Some(fee_rate) = last_fee_rate {
-        histogram.push((fee_rate, bin_size));
-    }
-    histogram
 }

@@ -39,12 +39,6 @@ pub struct Status {
     mempool: (Vec<FundingOutput>, Vec<SpendingInput>),
 }
 
-fn calc_balance((funding, spending): &(Vec<FundingOutput>, Vec<SpendingInput>)) -> i64 {
-    let funded: u64 = funding.iter().map(|output| output.value).sum();
-    let spent: u64 = spending.iter().map(|input| input.value).sum();
-    funded as i64 - spent as i64
-}
-
 impl Status {
     fn funding(&self) -> impl Iterator<Item = &FundingOutput> {
         self.confirmed.0.iter().chain(self.mempool.0.iter())
@@ -52,14 +46,6 @@ impl Status {
 
     fn spending(&self) -> impl Iterator<Item = &SpendingInput> {
         self.confirmed.1.iter().chain(self.mempool.1.iter())
-    }
-
-    pub fn confirmed_balance(&self) -> i64 {
-        calc_balance(&self.confirmed)
-    }
-
-    pub fn mempool_balance(&self) -> i64 {
-        calc_balance(&self.mempool)
     }
 
     pub fn history(&self) -> Vec<(i32, Sha256dHash)> {
@@ -384,109 +370,9 @@ impl Query {
         })
     }
 
-    // Public API for transaction retrieval (for Electrum RPC)
-    pub fn get_transaction(&self, tx_hash: &Sha256dHash, verbose: bool) -> Result<Value> {
-        let _timer = self
-            .duration
-            .with_label_values(&["get_transaction"])
-            .start_timer();
-        let blockhash = self.lookup_confirmed_blockhash(tx_hash, /*block_height*/ None)?;
-        self.app
-            .daemon()
-            .gettransaction_raw(tx_hash, blockhash, verbose)
-    }
-
-    pub fn get_headers(&self, heights: &[usize]) -> Vec<HeaderEntry> {
-        let _timer = self
-            .duration
-            .with_label_values(&["get_headers"])
-            .start_timer();
-        let index = self.app.index();
-        heights
-            .iter()
-            .filter_map(|height| index.get_header(*height))
-            .collect()
-    }
-
     pub fn get_best_header(&self) -> Result<HeaderEntry> {
         let last_header = self.app.index().best_header();
         Ok(last_header.chain_err(|| "no headers indexed")?.clone())
-    }
-
-    pub fn get_merkle_proof(
-        &self,
-        tx_hash: &Sha256dHash,
-        height: usize,
-    ) -> Result<(Vec<Sha256dHash>, usize)> {
-        let header_entry = self
-            .app
-            .index()
-            .get_header(height)
-            .chain_err(|| format!("missing block #{}", height))?;
-        let txids = self.app.daemon().getblocktxids(&header_entry.hash())?;
-        let pos = txids
-            .iter()
-            .position(|txid| txid == tx_hash)
-            .chain_err(|| format!("missing txid {}", tx_hash))?;
-        let (branch, _root) = create_merkle_branch_and_root(txids, pos);
-        Ok((branch, pos))
-    }
-
-    pub fn get_header_merkle_proof(
-        &self,
-        height: usize,
-        cp_height: usize,
-    ) -> Result<(Vec<Sha256dHash>, Sha256dHash)> {
-        if cp_height < height {
-            bail!("cp_height #{} < height #{}", cp_height, height);
-        }
-
-        let best_height = self.get_best_header()?.height();
-        if best_height < cp_height {
-            bail!(
-                "cp_height #{} above best block height #{}",
-                cp_height,
-                best_height
-            );
-        }
-
-        let heights: Vec<usize> = (0..=cp_height).collect();
-        let header_hashes: Vec<Sha256dHash> = self
-            .get_headers(&heights)
-            .into_iter()
-            .map(|h| *h.hash())
-            .collect();
-        assert_eq!(header_hashes.len(), heights.len());
-        Ok(create_merkle_branch_and_root(header_hashes, height))
-    }
-
-    pub fn get_id_from_pos(
-        &self,
-        height: usize,
-        tx_pos: usize,
-        want_merkle: bool,
-    ) -> Result<(Sha256dHash, Vec<Sha256dHash>)> {
-        let header_entry = self
-            .app
-            .index()
-            .get_header(height)
-            .chain_err(|| format!("missing block #{}", height))?;
-
-        let txids = self.app.daemon().getblocktxids(header_entry.hash())?;
-        let txid = *txids
-            .get(tx_pos)
-            .chain_err(|| format!("No tx in position #{} in block #{}", tx_pos, height))?;
-
-        let branch = if want_merkle {
-            create_merkle_branch_and_root(txids, tx_pos).0
-        } else {
-            vec![]
-        };
-        Ok((txid, branch))
-    }
-
-    pub fn broadcast(&self, txn: &Transaction) -> Result<Sha256dHash> {
-        self.app.daemon().broadcast(txn)
     }
 
     pub fn update_mempool(&self) -> Result<()> {
@@ -495,29 +381,5 @@ impl Query {
             .with_label_values(&["update_mempool"])
             .start_timer();
         self.tracker.write().unwrap().update(self.app.daemon())
-    }
-
-    /// Returns [vsize, fee_rate] pairs (measured in vbytes and satoshis).
-    pub fn get_fee_histogram(&self) -> Vec<(f32, u32)> {
-        self.tracker.read().unwrap().fee_histogram().clone()
-    }
-
-    // Fee rate [BTC/kB] to be confirmed in `blocks` from now.
-    pub fn estimate_fee(&self, blocks: usize) -> f32 {
-        let mut total_vsize = 0u32;
-        let mut last_fee_rate = 0.0;
-        let blocks_in_vbytes = (blocks * 1_000_000) as u32; // assume ~1MB blocks
-        for (fee_rate, vsize) in self.tracker.read().unwrap().fee_histogram() {
-            last_fee_rate = *fee_rate;
-            total_vsize += vsize;
-            if total_vsize >= blocks_in_vbytes {
-                break; // under-estimate the fee rate a bit
-            }
-        }
-        last_fee_rate * 1e-5 // [BTC/kB] = 10^5 [sat/B]
-    }
-
-    pub fn get_banner(&self) -> Result<String> {
-        self.app.get_banner()
     }
 }

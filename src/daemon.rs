@@ -583,15 +583,6 @@ impl Daemon {
         Ok(MempoolEntry::new(fee, vsize))
     }
 
-    pub fn broadcast(&self, tx: &Transaction) -> Result<Sha256dHash> {
-        let tx = hex::encode(serialize(tx));
-        let txid = self.request("sendrawtransaction", json!([tx]))?;
-        Ok(
-            Sha256dHash::from_hex(txid.as_str().chain_err(|| "non-string txid")?)
-                .chain_err(|| "failed to parse txid")?,
-        )
-    }
-
     fn get_all_headers(&self, tip: &Sha256dHash) -> Result<Vec<BlockHeader>> {
         let info: Value = self.request("getblockheader", json!([tip.to_hex()]))?;
         let tip_height = info

@@ -28,47 +28,6 @@ fn hash_from_value(val: Option<&Value>) -> Result<Sha256dHash> {
     Ok(script_hash)
 }
 
-fn usize_from_value(val: Option<&Value>, name: &str) -> Result<usize> {
-    let val = val.chain_err(|| format!("missing {}", name))?;
-    let val = val.as_u64().chain_err(|| format!("non-integer {}", name))?;
-    Ok(val as usize)
-}
-
-fn usize_from_value_or(val: Option<&Value>, name: &str, default: usize) -> Result<usize> {
-    if val.is_none() {
-        return Ok(default);
-    }
-    usize_from_value(val, name)
-}
-
-fn bool_from_value(val: Option<&Value>, name: &str) -> Result<bool> {
-    let val = val.chain_err(|| format!("missing {}", name))?;
-    let val = val.as_bool().chain_err(|| format!("not a bool {}", name))?;
-    Ok(val)
-}
-
-fn bool_from_value_or(val: Option<&Value>, name: &str, default: bool) -> Result<bool> {
-    if val.is_none() {
-        return Ok(default);
-    }
-    bool_from_value(val, name)
-}
-
-fn unspent_from_status(status: &Status) -> Value {
-    json!(Value::Array(
-        status
-            .unspent()
-            .into_iter()
-            .map(|out| json!({
-                "height": out.height,
-                "tx_pos": out.output_index,
-                "tx_hash": out.txn_id.to_hex(),
-                "value": out.value,
-            }))
-            .collect()
-    ))
-}
-
 struct Connection {
     query: Arc<Query>,
     last_header_entry: Option<HeaderEntry>,
