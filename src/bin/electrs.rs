@@ -17,7 +17,6 @@ use electrs::{
     daemon::Daemon,
     errors::*,
     index::Index,
-    metrics::Metrics,
     query::Query,
     rpc::RPC,
     signal::Waiter,
@@ -26,8 +25,6 @@ use electrs::{
 
 fn run_server(config: &Config) -> Result<()> {
     let signal = Waiter::start();
-    let metrics = Metrics::new(config.monitoring_addr);
-    metrics.start();
     let blocktxids_cache = Arc::new(BlockTxIDsCache::new(config.blocktxids_cache_size));
 
     let daemon = Daemon::new(
@@ -49,7 +46,7 @@ fn run_server(config: &Config) -> Result<()> {
     } else {
         // faster, but uses more memory
         let store =
-            bulk::index_blk_files(&daemon, config.bulk_index_threads, &metrics, &signal, store)?;
+            bulk::index_blk_files(&daemon, config.bulk_index_threads, &signal, store)?;
         let store = full_compaction(store);
         index.reload(&store); // make sure the block header index is up-to-date
         store
