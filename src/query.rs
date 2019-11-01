@@ -20,7 +20,6 @@ pub struct FundingOutput {
     pub txn_id: Sha256dHash,
     pub height: u32,
     pub output_index: usize,
-    pub value: u64,
 }
 
 type OutPoint = (Sha256dHash, usize); // (txid, output_index)
@@ -29,7 +28,6 @@ struct SpendingInput {
     txn_id: Sha256dHash,
     height: u32,
     funding_output: OutPoint,
-    value: u64,
 }
 
 pub struct Status {
@@ -178,7 +176,6 @@ impl Query {
                         txn_id: t.txn.txid(),
                         height: t.height,
                         funding_output: (funding.txn_id, funding.output_index),
-                        value: funding.value,
                     })
                 }
             }
@@ -201,7 +198,6 @@ impl Query {
                     txn_id,
                     height: t.height,
                     output_index: index,
-                    value: output.value,
                 })
             }
         }
