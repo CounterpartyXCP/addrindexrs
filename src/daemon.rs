@@ -312,7 +312,7 @@ impl Daemon {
                 break;
             }
             warn!("wait until bitcoind is synced (i.e. initialblockdownload = false)");
-            signal.wait(Duration::from_secs(3))?;
+            signal.wait(Duration::from_secs(10))?;
         }
         Ok(daemon)
     }
