@@ -14,8 +14,7 @@ impl App {
     pub fn new(
         store: store::DBStore,
         index: index::Index,
-        daemon: daemon::Daemon,
-        config: &Config,
+        daemon: daemon::Daemon
     ) -> Result<Arc<App>> {
         Ok(Arc::new(App {
             store,

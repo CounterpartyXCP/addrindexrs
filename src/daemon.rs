@@ -345,7 +345,7 @@ impl Daemon {
         self.network.magic()
     }
 
-    fn call_jsonrpc(&self, method: &str, request: &Value) -> Result<Value> {
+    fn call_jsonrpc(&self, request: &Value) -> Result<Value> {
         let mut conn = self.conn.lock().unwrap();
         let request = request.to_string();
         conn.send(&request)?;
@@ -361,7 +361,7 @@ impl Daemon {
             .map(|params| json!({"method": method, "params": params, "id": id}))
             .collect();
         let mut results = vec![];
-        let mut replies = self.call_jsonrpc(method, &reqs)?;
+        let mut replies = self.call_jsonrpc(&reqs)?;
         if let Some(replies_vec) = replies.as_array_mut() {
             for reply in replies_vec {
                 results.push(parse_jsonrpc_reply(reply.take(), method, id)?)
