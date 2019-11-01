@@ -19,7 +19,6 @@ const DEFAULT_SERVER_ADDRESS: [u8; 4] = [127, 0, 0, 1]; // by default, serve on 
 
 mod internal {
     #![allow(unused)]
-
     include!(concat!(env!("OUT_DIR"), "/configure_me_config.rs"));
 }
 
@@ -131,7 +130,6 @@ pub struct Config {
     pub daemon_rpc_addr: SocketAddr,
     pub cookie: Option<String>,
     pub electrum_rpc_addr: SocketAddr,
-    pub monitoring_addr: SocketAddr,
     pub jsonrpc_import: bool,
     pub index_batch_size: usize,
     pub bulk_index_threads: usize,
@@ -156,10 +154,12 @@ impl Config {
         use internal::ResultExt;
 
         let system_config: &OsStr = "/etc/electrs/config.toml".as_ref();
+
         let home_config = home_dir().map(|mut dir| {
             dir.extend(&[".electrs", "config.toml"]);
             dir
         });
+
         let cwd_config: &OsStr = "electrs.toml".as_ref();
         let configs = std::iter::once(cwd_config)
             .chain(home_config.as_ref().map(AsRef::as_ref))
@@ -182,27 +182,20 @@ impl Config {
             Network::Testnet => 18332,
             Network::Regtest => 18443,
         };
+
         let default_electrum_port = match config.network {
             Network::Bitcoin => 50001,
             Network::Testnet => 60001,
             Network::Regtest => 60401,
-        };
-        let default_monitoring_port = match config.network {
-            Network::Bitcoin => 4224,
-            Network::Testnet => 14224,
-            Network::Regtest => 24224,
         };
 
         let daemon_rpc_addr: SocketAddr = config.daemon_rpc_addr.map_or(
             (DEFAULT_SERVER_ADDRESS, default_daemon_port).into(),
             ResolvAddr::resolve_or_exit,
         );
+
         let electrum_rpc_addr: SocketAddr = config.electrum_rpc_addr.map_or(
             (DEFAULT_SERVER_ADDRESS, default_electrum_port).into(),
-            ResolvAddr::resolve_or_exit,
-        );
-        let monitoring_addr: SocketAddr = config.monitoring_addr.map_or(
-            (DEFAULT_SERVER_ADDRESS, default_monitoring_port).into(),
             ResolvAddr::resolve_or_exit,
         );
 
@@ -219,21 +212,26 @@ impl Config {
                 .try_into()
                 .expect("Overflow: Running electrs on less than 32 bit devices is unsupported"),
         );
+
         log.timestamp(if config.timestamp {
             stderrlog::Timestamp::Millisecond
         } else {
             stderrlog::Timestamp::Off
         });
+
         log.init().unwrap_or_else(|err| {
             eprintln!("Error: logging initialization failed: {}", err);
             std::process::exit(1)
         });
+
         // Could have been default, but it's useful to allow the user to specify 0 when overriding
         // configs.
         if config.bulk_index_threads == 0 {
             config.bulk_index_threads = num_cpus::get();
         }
+
         const MB: f32 = (1 << 20) as f32;
+
         let config = Config {
             log,
             network_type: config.network,
@@ -242,7 +240,6 @@ impl Config {
             daemon_rpc_addr,
             cookie: config.cookie,
             electrum_rpc_addr,
-            monitoring_addr,
             jsonrpc_import: config.jsonrpc_import,
             index_batch_size: config.index_batch_size,
             bulk_index_threads: config.bulk_index_threads,
@@ -250,6 +247,7 @@ impl Config {
             blocktxids_cache_size: (config.blocktxids_cache_size_mb * MB) as usize,
             txid_limit: config.txid_limit,
         };
+
         eprintln!("{:?}", config);
         config
     }

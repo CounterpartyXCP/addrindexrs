@@ -19,7 +19,6 @@ pub mod daemon;
 pub mod errors;
 pub mod index;
 pub mod mempool;
-pub mod metrics;
 pub mod query;
 pub mod rpc;
 pub mod signal;
