@@ -37,7 +37,6 @@ fn run_server(config: &Config) -> Result<()> {
         config.network_type,
         signal.clone(),
         blocktxids_cache,
-        &metrics,
     )?;
     // Perform initial indexing from local blk*.dat block files.
     let store = DBStore::open(&config.db_path, /*low_memory=*/ config.jsonrpc_import);
