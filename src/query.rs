@@ -303,11 +303,6 @@ impl Query {
         })
     }
 
-    pub fn get_best_header(&self) -> Result<HeaderEntry> {
-        let last_header = self.app.index().best_header();
-        Ok(last_header.chain_err(|| "no headers indexed")?.clone())
-    }
-
     pub fn update_mempool(&self) -> Result<()> {
         self.tracker.write().unwrap().update(self.app.daemon())
     }
