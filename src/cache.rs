@@ -1,6 +1,4 @@
 use crate::errors::*;
-use bitcoin::blockdata::transaction::Transaction;
-use bitcoin::consensus::encode::deserialize;
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
 use lru::LruCache;
 use std::hash::Hash;
@@ -80,39 +78,6 @@ impl BlockTxIDsCache {
     }
 }
 
-pub struct TransactionCache {
-    // Store serialized transaction (should use less RAM).
-    map: Mutex<SizedLruCache<Sha256dHash, Vec<u8>>>,
-}
-
-impl TransactionCache {
-    pub fn new(bytes_capacity: usize) -> TransactionCache {
-        TransactionCache {
-            map: Mutex::new(SizedLruCache::new(bytes_capacity)),
-        }
-    }
-
-    pub fn get_or_else<F>(&self, txid: &Sha256dHash, load_txn_func: F) -> Result<Transaction>
-    where
-        F: FnOnce() -> Result<Vec<u8>>,
-    {
-        match self.map.lock().unwrap().get(txid) {
-            Some(serialized_txn) => {
-                return Ok(deserialize(&serialized_txn).chain_err(|| "failed to parse cached tx")?);
-            }
-            None => {}
-        }
-        let serialized_txn = load_txn_func()?;
-        let txn = deserialize(&serialized_txn).chain_err(|| "failed to parse serialized tx")?;
-        let byte_size = 32 /* key (hash size) */ + serialized_txn.len();
-        self.map
-            .lock()
-            .unwrap()
-            .put(*txid, serialized_txn, byte_size);
-        Ok(txn)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,36 +153,5 @@ mod tests {
         cache.get_or_else(&block3, &miss_func).unwrap();
         cache.get_or_else(&block1, &miss_func).unwrap();
         assert_eq!(4, *misses.lock().unwrap());
-    }
-
-    #[test]
-    fn test_txn_cache() {
-        use bitcoin::util::hash::BitcoinHash;
-        use hex;
-
-        let cache = TransactionCache::new(1024);
-        let tx_bytes = hex::decode("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
-
-        let tx: Transaction = deserialize(&tx_bytes).unwrap();
-        let txid = tx.bitcoin_hash();
-
-        let mut misses = 0;
-        assert_eq!(
-            cache
-                .get_or_else(&txid, || {
-                    misses += 1;
-                    Ok(tx_bytes.clone())
-                })
-                .unwrap(),
-            tx
-        );
-        assert_eq!(misses, 1);
-        assert_eq!(
-            cache
-                .get_or_else(&txid, || panic!("should not be called"))
-                .unwrap(),
-            tx
-        );
-        assert_eq!(misses, 1);
     }
 }

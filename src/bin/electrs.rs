@@ -12,7 +12,7 @@ use std::time::Duration;
 use electrs::{
     app::App,
     bulk,
-    cache::{BlockTxIDsCache, TransactionCache},
+    cache::BlockTxIDsCache,
     config::Config,
     daemon::Daemon,
     errors::*,
@@ -54,8 +54,7 @@ fn run_server(config: &Config) -> Result<()> {
     .enable_compaction(); // enable auto compactions before starting incremental index updates.
 
     let app = App::new(store, index, daemon)?;
-    let tx_cache = TransactionCache::new(config.tx_cache_size);
-    let query = Query::new(app.clone(), tx_cache, config.txid_limit);
+    let query = Query::new(app.clone(), config.txid_limit);
 
     let mut server = None; // Electrum RPC server
     loop {
