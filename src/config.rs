@@ -15,14 +15,20 @@ use stderrlog;
 use crate::daemon::CookieGetter;
 use crate::errors::*;
 
+//
+// Default IP address of the RPC server
+//
 const DEFAULT_SERVER_ADDRESS: [u8; 4] = [127, 0, 0, 1]; // by default, serve on IPv4 localhost
+
 
 mod internal {
     #![allow(unused)]
     include!(concat!(env!("OUT_DIR"), "/configure_me_config.rs"));
 }
 
-/// A simple error type representing invalid UTF-8 input.
+//
+// A simple error type representing invalid UTF-8 input.
+//
 pub struct InvalidUtf8(OsString);
 
 impl fmt::Display for InvalidUtf8 {
@@ -31,7 +37,9 @@ impl fmt::Display for InvalidUtf8 {
     }
 }
 
-/// An error that might happen when resolving an address
+//
+// An error that might happen when resolving an address
+//
 pub enum AddressError {
     ResolvError { addr: String, err: std::io::Error },
     NoAddrError(String),
@@ -48,10 +56,10 @@ impl fmt::Display for AddressError {
     }
 }
 
-/// Newtype for an address that is parsed as `String`
-///
-/// The main point of this newtype is to provide better description than what `String` type
-/// provides.
+// Newtype for an address that is parsed as `String`
+//
+// The main point of this newtype is to provide better description than what `String` type
+// provides.
 #[derive(Deserialize)]
 pub struct ResolvAddr(String);
 
@@ -89,7 +97,9 @@ impl ResolvAddr {
     }
 }
 
-/// This newtype implements `ParseArg` for `Network`.
+//
+// This newtype implements `ParseArg` for `Network`.
+//
 #[derive(Deserialize)]
 pub struct BitcoinNetwork(Network);
 
@@ -119,7 +129,9 @@ impl Into<Network> for BitcoinNetwork {
     }
 }
 
-/// Parsed and post-processed configuration
+//
+// Parsed and post-processed configuration
+//
 #[derive(Debug)]
 pub struct Config {
     // See below for the documentation of each field:
@@ -265,6 +277,9 @@ impl Config {
     }
 }
 
+//
+// Auth cookie for bitcoind
+//
 struct StaticCookie {
     value: Vec<u8>,
 }

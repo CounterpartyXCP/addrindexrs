@@ -5,6 +5,9 @@ use std::hash::Hash;
 use std::sync::Mutex;
 
 
+//
+// LRU cache with a fixed size
+//
 struct SizedLruCache<K, V> {
     map: LruCache<K, (V, usize)>,
     bytes_usage: usize,
@@ -45,6 +48,9 @@ impl<K: Hash + Eq, V> SizedLruCache<K, V> {
     }
 }
 
+//
+// Cache storing the txids of transactions included in a block
+//
 pub struct BlockTxIDsCache {
     map: Mutex<SizedLruCache<Sha256dHash /* blockhash */, Vec<Sha256dHash /* txid */>>>,
 }

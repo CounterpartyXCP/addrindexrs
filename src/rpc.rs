@@ -12,18 +12,25 @@ use crate::errors::*;
 use crate::query::Query;
 use crate::util::{spawn_thread, Channel, SyncChannel};
 
+// Indexer version
 const ELECTRS_VERSION: &str = env!("CARGO_PKG_VERSION");
+// Version of the simulated electrum protocol
 const PROTOCOL_VERSION: &str = "1.4";
 
-
-// TODO: Sha256dHash should be a generic hash-container (since script hash is single SHA256)
+//
+// Get a script hash from a given value
+//
 fn hash_from_value(val: Option<&Value>) -> Result<Sha256dHash> {
+    // TODO: Sha256dHash should be a generic hash-container (since script hash is single SHA256)
     let script_hash = val.chain_err(|| "missing hash")?;
     let script_hash = script_hash.as_str().chain_err(|| "non-string hash")?;
     let script_hash = Sha256dHash::from_hex(script_hash).chain_err(|| "non-hex hash")?;
     Ok(script_hash)
 }
 
+//
+// Connection with a RPC client
+//
 struct Connection {
     query: Arc<Query>,
     stream: TcpStream,
@@ -47,7 +54,7 @@ impl Connection {
 
     fn server_version(&self) -> Result<Value> {
         Ok(json!([
-            format!("electrs {}", ELECTRS_VERSION),
+            format!("addrindexrs {}", ELECTRS_VERSION),
             PROTOCOL_VERSION
         ]))
     }
@@ -171,12 +178,18 @@ impl Connection {
     }
 }
 
+//
+// Messages supported by the RPC API
+//
 #[derive(Debug)]
 pub enum Message {
     Request(String),
     Done,
 }
 
+//
+// RPC server
+//
 pub struct RPC {
     server: Option<thread::JoinHandle<()>>, // so we can join the server while dropping this ojbect
 }
@@ -189,7 +202,7 @@ impl RPC {
             let listener =
                 TcpListener::bind(addr).unwrap_or_else(|e| panic!("bind({}) failed: {}", addr, e));
             info!(
-                "Electrum RPC server running on {} (protocol {})",
+                "Indexer RPC server running on {} (protocol {})",
                 addr, PROTOCOL_VERSION
             );
             loop {
@@ -209,6 +222,7 @@ impl RPC {
                 let senders = Arc::new(Mutex::new(Vec::<SyncSender<Message>>::new()));
                 let acceptor = RPC::start_acceptor(addr);
                 let mut children = vec![];
+
                 while let Some((stream, addr)) = acceptor.receiver().recv().unwrap() {
                     let query = query.clone();
                     let senders = senders.clone();
@@ -220,14 +234,17 @@ impl RPC {
                         info!("[{}] disconnected peer", addr);
                     }));
                 }
+
                 trace!("closing {} RPC connections", senders.lock().unwrap().len());
                 for sender in senders.lock().unwrap().iter() {
                     let _ = sender.send(Message::Done);
                 }
+
                 trace!("waiting for {} RPC handling threads", children.len());
                 for child in children {
                     let _ = child.join();
                 }
+
                 trace!("RPC connections are closed");
             })),
         }

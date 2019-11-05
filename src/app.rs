@@ -3,6 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::{daemon, errors::*, index, signal::Waiter, store};
 
+//
+// Application
+//
 pub struct App {
     store: store::DBStore,
     index: index::Index,
@@ -27,13 +30,16 @@ impl App {
     fn write_store(&self) -> &impl store::WriteStore {
         &self.store
     }
+
     // TODO: use index for queries.
     pub fn read_store(&self) -> &dyn store::ReadStore {
         &self.store
     }
+
     pub fn index(&self) -> &index::Index {
         &self.index
     }
+
     pub fn daemon(&self) -> &daemon::Daemon {
         &self.daemon
     }

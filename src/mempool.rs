@@ -12,6 +12,10 @@ use crate::store::{ReadStore, Row};
 use crate::util::Bytes;
 
 
+//
+// BTree emulating a db store
+// for mempool transactions
+//
 struct MempoolStore {
     map: BTreeMap<Bytes, Vec<Bytes>>,
 }
@@ -85,6 +89,9 @@ impl ReadStore for MempoolStore {
     }
 }
 
+//
+// Tracker managing mempool transactions
+//
 pub struct Tracker {
     items: HashMap<Sha256dHash, Transaction>,
     index: MempoolStore,

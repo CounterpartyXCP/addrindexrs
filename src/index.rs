@@ -14,17 +14,24 @@ use crate::errors::*;
 use crate::signal::Waiter;
 use crate::store::{ReadStore, Row, WriteStore};
 use crate::util::{
-    full_hash, hash_prefix, spawn_thread, Bytes, FullHash, HashPrefix, HeaderEntry, HeaderList,
+    full_hash, hash_prefix, spawn_thread, Bytes,
+    FullHash, HashPrefix, HeaderEntry, HeaderList,
     HeaderMap, SyncChannel, HASH_PREFIX_LEN,
 };
 
+//
+// Key of a row storing an input of a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxInKey {
     pub code: u8,
-    pub prev_hash_prefix: HashPrefix,
-    pub prev_index: u16,
+    pub prev_txid_prefix: HashPrefix,
+    pub prev_vout: u16,
 }
 
+//
+// Row storing an input of a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxInRow {
     key: TxInKey,
@@ -36,18 +43,18 @@ impl TxInRow {
         TxInRow {
             key: TxInKey {
                 code: b'I',
-                prev_hash_prefix: hash_prefix(&input.previous_output.txid[..]),
-                prev_index: input.previous_output.vout as u16,
+                prev_txid_prefix: hash_prefix(&input.previous_output.txid[..]),
+                prev_vout: input.previous_output.vout as u16,
             },
             txid_prefix: hash_prefix(&txid[..]),
         }
     }
 
-    pub fn filter(txid: &Sha256dHash, output_index: usize) -> Bytes {
+    pub fn filter(txid: &Sha256dHash, vout: usize) -> Bytes {
         bincode::serialize(&TxInKey {
             code: b'I',
-            prev_hash_prefix: hash_prefix(&txid[..]),
-            prev_index: output_index as u16,
+            prev_txid_prefix: hash_prefix(&txid[..]),
+            prev_vout: vout as u16,
         })
         .unwrap()
     }
@@ -64,12 +71,18 @@ impl TxInRow {
     }
 }
 
+//
+// Key of a row storing an output of a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxOutKey {
     code: u8,
     script_hash_prefix: HashPrefix,
 }
 
+//
+// Row storing an output of a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxOutRow {
     key: TxOutKey,
@@ -109,12 +122,18 @@ impl TxOutRow {
     }
 }
 
+//
+// Key of a row storing a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxKey {
     code: u8,
     pub txid: FullHash,
 }
 
+//
+// Row storing a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxRow {
     pub key: TxKey,
@@ -150,12 +169,18 @@ impl TxRow {
     }
 }
 
+//
+// Key of a row storing a block
+//
 #[derive(Serialize, Deserialize)]
 struct BlockKey {
     code: u8,
     hash: FullHash,
 }
 
+//
+// Compute the script hash of a scriptpubkey
+//
 pub fn compute_script_hash(data: &[u8]) -> FullHash {
     let mut hash = FullHash::default();
     let mut sha2 = Sha256::new();
@@ -164,6 +189,9 @@ pub fn compute_script_hash(data: &[u8]) -> FullHash {
     hash
 }
 
+//
+// Index a transaction
+//
 pub fn index_transaction<'a>(txn: &'a Transaction) -> impl 'a + Iterator<Item = Row> {
     let null_hash = Sha256dHash::default();
     let txid: Sha256dHash = txn.txid();
@@ -187,6 +215,9 @@ pub fn index_transaction<'a>(txn: &'a Transaction) -> impl 'a + Iterator<Item = 
         .chain(std::iter::once(TxRow::new(&txid).to_row()))
 }
 
+//
+// Index a block
+//
 pub fn index_block<'a>(block: &'a Block) -> impl 'a + Iterator<Item = Row> {
     let blockhash = block.bitcoin_hash();
     // Persist block hash and header
@@ -205,6 +236,9 @@ pub fn index_block<'a>(block: &'a Block) -> impl 'a + Iterator<Item = Row> {
         .chain(std::iter::once(row))
 }
 
+//
+// Retrieve the last indexed block
+//
 pub fn last_indexed_block(blockhash: &Sha256dHash) -> Row {
     // Store last indexed block (i.e. all previous blocks were indexed)
     Row {
@@ -213,6 +247,9 @@ pub fn last_indexed_block(blockhash: &Sha256dHash) -> Row {
     }
 }
 
+//
+// Retrieve the hashes of all the indexed blocks
+//
 pub fn read_indexed_blockhashes(store: &dyn ReadStore) -> HashSet<Sha256dHash> {
     let mut result = HashSet::new();
     for row in store.scan(b"B") {
@@ -222,6 +259,9 @@ pub fn read_indexed_blockhashes(store: &dyn ReadStore) -> HashSet<Sha256dHash> {
     result
 }
 
+//
+// Retrieve the headers of all the indexed blocks
+//
 fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
     let latest_blockhash: Sha256dHash = match store.get(b"L") {
         // latest blockheader persisted in the DB.
@@ -229,15 +269,18 @@ fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
         None => Sha256dHash::default(),
     };
     trace!("lastest indexed blockhash: {}", latest_blockhash);
+
     let mut map = HeaderMap::new();
     for row in store.scan(b"B") {
         let key: BlockKey = bincode::deserialize(&row.key).unwrap();
         let header: BlockHeader = deserialize(&row.value).unwrap();
         map.insert(deserialize(&key.hash).unwrap(), header);
     }
+
     let mut headers = vec![];
     let null_hash = Sha256dHash::default();
     let mut blockhash = latest_blockhash;
+
     while blockhash != null_hash {
         let header = map
             .remove(&blockhash)
@@ -245,7 +288,9 @@ fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
         blockhash = header.prev_blockhash;
         headers.push(header);
     }
+
     headers.reverse();
+
     assert_eq!(
         headers
             .first()
@@ -253,6 +298,7 @@ fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
             .unwrap_or(null_hash),
         null_hash
     );
+
     assert_eq!(
         headers
             .last()
@@ -260,12 +306,16 @@ fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
             .unwrap_or(null_hash),
         latest_blockhash
     );
+
     let mut result = HeaderList::empty();
     let entries = result.order(headers);
     result.apply(entries, latest_blockhash);
     result
 }
 
+//
+// Indexer
+//
 pub struct Index {
     // TODO: store also latest snapshot.
     headers: RwLock<HeaderList>,

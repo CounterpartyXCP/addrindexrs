@@ -20,7 +20,9 @@ use crate::signal::Waiter;
 use crate::store::{DBStore, Row, WriteStore};
 use crate::util::{spawn_thread, HeaderList, SyncChannel};
 
-
+//
+// Blockchain parser (bulk mode)
+//
 struct Parser {
     magic: u32,
     current_headers: HeaderList,
@@ -79,6 +81,9 @@ impl Parser {
     }
 }
 
+//
+// Parse the bitcoin blocks
+//
 fn parse_blocks(blob: Vec<u8>, magic: u32) -> Result<Vec<Block>> {
     let mut cursor = Cursor::new(&blob);
     let mut blocks = vec![];
@@ -125,6 +130,9 @@ fn parse_blocks(blob: Vec<u8>, magic: u32) -> Result<Vec<Block>> {
     Ok(blocks)
 }
 
+//
+// Retrieve the block headers
+//
 fn load_headers(daemon: &Daemon) -> Result<HeaderList> {
     let tip = daemon.getbestblockhash()?;
     let mut headers = HeaderList::empty();
@@ -133,6 +141,9 @@ fn load_headers(daemon: &Daemon) -> Result<HeaderList> {
     Ok(headers)
 }
 
+//
+// Manage open file limits
+//
 fn set_open_files_limit(limit: libc::rlim_t) {
     let resource = libc::RLIMIT_NOFILE;
     let mut rlim = libc::rlimit {
@@ -150,9 +161,13 @@ fn set_open_files_limit(limit: libc::rlim_t) {
     }
 }
 
+
 type JoinHandle = thread::JoinHandle<Result<()>>;
 type BlobReceiver = Arc<Mutex<Receiver<(Vec<u8>, PathBuf)>>>;
 
+//
+// 
+//
 fn start_reader(blk_files: Vec<PathBuf>, parser: Arc<Parser>) -> (BlobReceiver, JoinHandle) {
     let chan = SyncChannel::new(0);
     let blobs = chan.sender();
@@ -167,6 +182,9 @@ fn start_reader(blk_files: Vec<PathBuf>, parser: Arc<Parser>) -> (BlobReceiver, 
     (Arc::new(Mutex::new(chan.into_receiver())), handle)
 }
 
+//
+// Bulk indexing of blocks
+//
 fn start_indexer(
     blobs: BlobReceiver,
     parser: Arc<Parser>,
@@ -191,6 +209,9 @@ fn start_indexer(
     })
 }
 
+//
+// Index block files of bitcoind
+//
 pub fn index_blk_files(
     daemon: &Daemon,
     index_threads: usize,

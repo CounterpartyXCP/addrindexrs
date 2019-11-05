@@ -9,26 +9,35 @@ use crate::mempool::Tracker;
 use crate::store::ReadStore;
 use crate::util::HashPrefix;
 
-
-pub struct FundingOutput {
-    pub txn_id: Sha256dHash,
-    pub output_index: usize,
+//
+// Output of a Transaction
+//
+pub struct Txo {
+    pub txid: Sha256dHash,
+    pub vout: usize,
 }
 
-type OutPoint = (Sha256dHash, usize); // (txid, output_index)
+//
+// Input of a Transaction
+//
+type OutPoint = (Sha256dHash, usize); // (txid, vout)
 
 struct SpendingInput {
-    txn_id: Sha256dHash,
-    funding_output: OutPoint,
+    txid: Sha256dHash,
+    outpoint: OutPoint,
 }
 
+//
+// Status of an Address
+// (vectors of confirmed and unconfirmed outputs and inputs)
+//
 pub struct Status {
-    confirmed: (Vec<FundingOutput>, Vec<SpendingInput>),
-    mempool: (Vec<FundingOutput>, Vec<SpendingInput>),
+    confirmed: (Vec<Txo>, Vec<SpendingInput>),
+    mempool: (Vec<Txo>, Vec<SpendingInput>),
 }
 
 impl Status {
-    fn funding(&self) -> impl Iterator<Item = &FundingOutput> {
+    fn funding(&self) -> impl Iterator<Item = &Txo> {
         self.confirmed.0.iter().chain(self.mempool.0.iter())
     }
 
@@ -39,50 +48,19 @@ impl Status {
     pub fn history(&self) -> Vec<Sha256dHash> {
         let mut txns = vec![];
         for f in self.funding() {
-            txns.push(f.txn_id);
+            txns.push(f.txid);
         }
         for s in self.spending() {
-            txns.push(s.txn_id);
+            txns.push(s.txid);
         }
         txns.sort_unstable();
         txns
     }
 }
 
-fn txrows_by_prefix(
-    store: &dyn ReadStore,
-    txid_prefix: HashPrefix
-) -> Vec<TxRow> {
-    store
-        .scan(&TxRow::filter_prefix(txid_prefix))
-        .iter()
-        .map(|row| TxRow::from_row(row))
-        .collect()
-}
-
-fn txoutrows_by_script_hash(
-    store: &dyn ReadStore,
-    script_hash: &[u8]
-) -> Vec<TxOutRow> {
-    store
-        .scan(&TxOutRow::filter(script_hash))
-        .iter()
-        .map(|row| TxOutRow::from_row(row))
-        .collect()
-}
-
-fn txids_by_funding_output(
-    store: &dyn ReadStore,
-    txn_id: &Sha256dHash,
-    output_index: usize,
-) -> Vec<HashPrefix> {
-    store
-        .scan(&TxInRow::filter(&txn_id, output_index))
-        .iter()
-        .map(|row| TxInRow::from_row(row).txid_prefix)
-        .collect()
-}
-
+//
+// QUery tool for the indexer
+//
 pub struct Query {
     app: Arc<App>,
     tracker: RwLock<Tracker>,
@@ -101,14 +79,51 @@ impl Query {
         })
     }
 
-    fn load_txns_by_prefix(
+    fn get_txrows_by_prefix(
+        &self,
+        store: &dyn ReadStore,
+        prefix: HashPrefix
+    ) -> Vec<TxRow> {
+        store
+            .scan(&TxRow::filter_prefix(prefix))
+            .iter()
+            .map(|row| TxRow::from_row(row))
+            .collect()
+    }
+
+    fn get_txoutrows_by_script_hash(
+        &self,
+        store: &dyn ReadStore,
+        script_hash: &[u8]
+    ) -> Vec<TxOutRow> {
+        store
+            .scan(&TxOutRow::filter(script_hash))
+            .iter()
+            .map(|row| TxOutRow::from_row(row))
+            .collect()
+    }
+
+    fn get_prefixes_by_funding_txo(
+        &self,
+        store: &dyn ReadStore,
+        txid: &Sha256dHash,
+        vout: usize,
+    ) -> Vec<HashPrefix> {
+        store
+            .scan(&TxInRow::filter(&txid, vout))
+            .iter()
+            .map(|row| TxInRow::from_row(row).txid_prefix)
+            .collect()
+    }
+
+    fn get_txids_by_prefix(
         &self,
         store: &dyn ReadStore,
         prefixes: Vec<HashPrefix>,
     ) -> Result<Vec<Sha256dHash>> {
         let mut txns = vec![];
-        for txid_prefix in prefixes {
-            for tx_row in txrows_by_prefix(store, txid_prefix) {
+        for prefix in prefixes {
+            for tx_row in self.get_txrows_by_prefix(store, prefix) {
                 let txid: Sha256dHash = deserialize(&tx_row.key.txid).unwrap();
                 txns.push(txid)
             }
@@ -119,26 +134,24 @@ impl Query {
     fn find_spending_input(
         &self,
         store: &dyn ReadStore,
-        funding: &FundingOutput,
+        txo: &Txo,
     ) -> Result<Option<SpendingInput>> {
 
-        let mut spending_inputs = vec![];
-        let prefixes = txids_by_funding_output(store, &funding.txn_id, funding.output_index);
-        let spending_txns = self.load_txns_by_prefix(store, prefixes)?;
+        let mut spendings = vec![];
+        let prefixes = self.get_prefixes_by_funding_txo(store, &txo.txid, txo.vout);
+        let txids = self.get_txids_by_prefix(store, prefixes)?;
 
-        for t in &spending_txns {
-            if *t == funding.txn_id {
-                spending_inputs.push(SpendingInput {
-                    txn_id: *t,
-                    funding_output: (funding.txn_id, funding.output_index),
-                })
-            }
+        for txid in &txids {
+            spendings.push(SpendingInput {
+                txid: *txid,
+                outpoint: (txo.txid, txo.vout),
+            })
         }
 
-        assert!(spending_inputs.len() <= 1);
+        assert!(spendings.len() <= 1);
 
-        Ok(if spending_inputs.len() == 1 {
-            Some(spending_inputs.remove(0))
+        Ok(if spendings.len() == 1 {
+            Some(spendings.remove(0))
         } else {
             None
         })
@@ -148,17 +161,17 @@ impl Query {
         &self,
         store: &dyn ReadStore,
         script_hash: &[u8]
-    ) -> Result<Vec<FundingOutput>> {
-        let txout_rows = txoutrows_by_script_hash(store, script_hash);
+    ) -> Result<Vec<Txo>> {
+        let txout_rows = self.get_txoutrows_by_script_hash(store, script_hash);
 
         let mut result = vec![];
 
         for row in &txout_rows {
-            let funding_txns = self.load_txns_by_prefix(store, vec![row.txid_prefix])?;
-            for t in &funding_txns {
-                result.push(FundingOutput {
-                    txn_id: *t,
-                    output_index: row.vout as usize,
+            let txids = self.get_txids_by_prefix(store, vec![row.txid_prefix])?;
+            for txid in &txids {
+                result.push(Txo {
+                    txid: *txid,
+                    vout: row.vout as usize,
                 })
             }
         }
@@ -169,16 +182,22 @@ impl Query {
     fn confirmed_status(
         &self,
         script_hash: &[u8],
-    ) -> Result<(Vec<FundingOutput>, Vec<SpendingInput>)> {
+    ) -> Result<(Vec<Txo>, Vec<SpendingInput>)> {
         let mut funding = vec![];
         let mut spending = vec![];
         let read_store = self.app.read_store();
 
-        let funding_outputs = self.find_funding_outputs(read_store, script_hash)?;
-        funding.extend(funding_outputs);
+        let txos = self.find_funding_outputs(read_store, script_hash)?;
+        if self.txid_limit > 0 && txos.len() > self.txid_limit {
+            bail!(
+                "{}+ transactions found, query may take a long time",
+                txos.len()
+            );
+        }
+        funding.extend(txos);
 
-        for funding_output in &funding {
-            if let Some(spent) = self.find_spending_input(read_store, &funding_output)? {
+        for txo in &funding {
+            if let Some(spent) = self.find_spending_input(read_store, &txo)? {
                 spending.push(spent);
             }
         }
@@ -189,17 +208,24 @@ impl Query {
     fn mempool_status(
         &self,
         script_hash: &[u8],
-        confirmed_funding: &[FundingOutput],
-    ) -> Result<(Vec<FundingOutput>, Vec<SpendingInput>)> {
+        confirmed_funding: &[Txo],
+    ) -> Result<(Vec<Txo>, Vec<SpendingInput>)> {
         let mut funding = vec![];
         let mut spending = vec![];
+
         let tracker = self.tracker.read().unwrap();
 
-        let funding_outputs = self.find_funding_outputs(tracker.index(), script_hash)?;
-        funding.extend(funding_outputs);
+        let txos = self.find_funding_outputs(tracker.index(), script_hash)?;
+        if self.txid_limit > 0 && txos.len() > self.txid_limit {
+            bail!(
+                "{}+ transactions found, query may take a long time",
+                txos.len()
+            );
+        }
+        funding.extend(txos);
 
-        for funding_output in funding.iter().chain(confirmed_funding.iter()) {
-            if let Some(spent) = self.find_spending_input(tracker.index(), &funding_output)? {
+        for txo in funding.iter().chain(confirmed_funding.iter()) {
+            if let Some(spent) = self.find_spending_input(tracker.index(), &txo)? {
                 spending.push(spent);
             }
         }
