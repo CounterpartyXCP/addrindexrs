@@ -6,8 +6,7 @@ use bitcoin::util::hash::BitcoinHash;
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
-use std::collections::{HashMap, HashSet};
-use std::iter::FromIterator;
+use std::collections::HashSet;
 use std::sync::RwLock;
 
 use crate::daemon::Daemon;
@@ -116,19 +115,18 @@ pub struct TxKey {
     pub txid: FullHash,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct TxRow {
     pub key: TxKey,
-    pub height: u32, // value
 }
 
 impl TxRow {
-    pub fn new(txid: &Sha256dHash, height: u32) -> TxRow {
+    pub fn new(txid: &Sha256dHash) -> TxRow {
         TxRow {
             key: TxKey {
                 code: b'T',
                 txid: full_hash(&txid[..]),
             },
-            height,
         }
     }
 
@@ -142,16 +140,13 @@ impl TxRow {
 
     pub fn to_row(&self) -> Row {
         Row {
-            key: bincode::serialize(&self.key).unwrap(),
-            value: bincode::serialize(&self.height).unwrap(),
+            key: bincode::serialize(&self).unwrap(),
+            value: vec![],
         }
     }
 
     pub fn from_row(row: &Row) -> TxRow {
-        TxRow {
-            key: bincode::deserialize(&row.key).expect("failed to parse TxKey"),
-            height: bincode::deserialize(&row.value).expect("failed to parse height"),
-        }
+        bincode::deserialize(&row.key).expect("failed to parse TxRow")
     }
 }
 
@@ -169,10 +164,7 @@ pub fn compute_script_hash(data: &[u8]) -> FullHash {
     hash
 }
 
-pub fn index_transaction<'a>(
-    txn: &'a Transaction,
-    height: usize,
-) -> impl 'a + Iterator<Item = Row> {
+pub fn index_transaction<'a>(txn: &'a Transaction) -> impl 'a + Iterator<Item = Row> {
     let null_hash = Sha256dHash::default();
     let txid: Sha256dHash = txn.txid();
 
@@ -190,13 +182,12 @@ pub fn index_transaction<'a>(
         .enumerate()
         .map(move |(vout, output)| TxOutRow::new(&txid, vout as u32, &output).to_row());
 
-    // Persist transaction ID and confirmed height
     inputs
         .chain(outputs)
-        .chain(std::iter::once(TxRow::new(&txid, height as u32).to_row()))
+        .chain(std::iter::once(TxRow::new(&txid).to_row()))
 }
 
-pub fn index_block<'a>(block: &'a Block, height: usize) -> impl 'a + Iterator<Item = Row> {
+pub fn index_block<'a>(block: &'a Block) -> impl 'a + Iterator<Item = Row> {
     let blockhash = block.bitcoin_hash();
     // Persist block hash and header
     let row = Row {
@@ -210,7 +201,7 @@ pub fn index_block<'a>(block: &'a Block, height: usize) -> impl 'a + Iterator<It
     block
         .txdata
         .iter()
-        .flat_map(move |txn| index_transaction(&txn, height))
+        .flat_map(move |txn| index_transaction(&txn))
         .chain(std::iter::once(row))
 }
 
@@ -322,10 +313,6 @@ impl Index {
             info!("{:?} ({} left to index)", latest_header, new_headers.len());
         };
 
-        let height_map = HashMap::<Sha256dHash, usize>::from_iter(
-            new_headers.iter().map(|h| (*h.hash(), h.height())),
-        );
-
         let chan = SyncChannel::new(1);
         let sender = chan.sender();
         let blockhashes: Vec<Sha256dHash> = new_headers.iter().map(|h| *h.hash()).collect();
@@ -356,10 +343,7 @@ impl Index {
 
             let rows_iter = batch.iter().flat_map(|block| {
                 let blockhash = block.bitcoin_hash();
-                let height = *height_map
-                    .get(&blockhash)
-                    .unwrap_or_else(|| panic!("missing header for block {}", blockhash));
-                index_block(block, height).chain(std::iter::once(last_indexed_block(&blockhash)))
+                index_block(block).chain(std::iter::once(last_indexed_block(&blockhash)))
             });
 
             store.write(rows_iter);

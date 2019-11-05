@@ -1,6 +1,5 @@
 use bitcoin::consensus::encode::deserialize;
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::app::App;
@@ -13,7 +12,6 @@ use crate::util::HashPrefix;
 
 pub struct FundingOutput {
     pub txn_id: Sha256dHash,
-    pub height: u32,
     pub output_index: usize,
 }
 
@@ -21,7 +19,6 @@ type OutPoint = (Sha256dHash, usize); // (txid, output_index)
 
 struct SpendingInput {
     txn_id: Sha256dHash,
-    height: u32,
     funding_output: OutPoint,
 }
 
@@ -39,24 +36,17 @@ impl Status {
         self.confirmed.1.iter().chain(self.mempool.1.iter())
     }
 
-    pub fn history(&self) -> Vec<(i32, Sha256dHash)> {
-        let mut txns_map = HashMap::<Sha256dHash, i32>::new();
+    pub fn history(&self) -> Vec<Sha256dHash> {
+        let mut txns = vec![];
         for f in self.funding() {
-            txns_map.insert(f.txn_id, f.height as i32);
+            txns.push(f.txn_id);
         }
         for s in self.spending() {
-            txns_map.insert(s.txn_id, s.height as i32);
+            txns.push(s.txn_id);
         }
-        let mut txns: Vec<(i32, Sha256dHash)> =
-            txns_map.into_iter().map(|item| (item.1, item.0)).collect();
         txns.sort_unstable();
         txns
     }
-}
-
-struct TxnHeight {
-    txn_id: Sha256dHash,
-    height: u32,
 }
 
 fn txrows_by_prefix(
@@ -115,15 +105,12 @@ impl Query {
         &self,
         store: &dyn ReadStore,
         prefixes: Vec<HashPrefix>,
-    ) -> Result<Vec<TxnHeight>> {
+    ) -> Result<Vec<Sha256dHash>> {
         let mut txns = vec![];
         for txid_prefix in prefixes {
             for tx_row in txrows_by_prefix(store, txid_prefix) {
                 let txid: Sha256dHash = deserialize(&tx_row.key.txid).unwrap();
-                txns.push(TxnHeight {
-                    txn_id: txid,
-                    height: tx_row.height,
-                })
+                txns.push(txid)
             }
         }
         Ok(txns)
@@ -140,10 +127,9 @@ impl Query {
         let spending_txns = self.load_txns_by_prefix(store, prefixes)?;
 
         for t in &spending_txns {
-            if t.txn_id == funding.txn_id {
+            if *t == funding.txn_id {
                 spending_inputs.push(SpendingInput {
-                    txn_id: t.txn_id,
-                    height: t.height,
+                    txn_id: *t,
                     funding_output: (funding.txn_id, funding.output_index),
                 })
             }
@@ -171,8 +157,7 @@ impl Query {
             let funding_txns = self.load_txns_by_prefix(store, vec![row.txid_prefix])?;
             for t in &funding_txns {
                 result.push(FundingOutput {
-                    txn_id: t.txn_id,
-                    height: t.height,
+                    txn_id: *t,
                     output_index: row.vout as usize,
                 })
             }

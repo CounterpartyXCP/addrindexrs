@@ -63,13 +63,13 @@ impl Parser {
         let mut rows = Vec::<Row>::new();
         for block in blocks {
             let blockhash = block.bitcoin_hash();
-            if let Some(header) = self.current_headers.header_by_blockhash(&blockhash) {
+            if let Some(_header) = self.current_headers.header_by_blockhash(&blockhash) {
                 if self.indexed_blockhashes
                     .lock()
                     .expect("indexed_blockhashes")
                     .insert(blockhash)
                 {
-                    rows.extend(index_block(&block, header.height()));
+                    rows.extend(index_block(&block));
                 }
             }
         }
