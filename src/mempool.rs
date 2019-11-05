@@ -98,10 +98,6 @@ impl Tracker {
         }
     }
 
-    pub fn get_txn(&self, txid: &Sha256dHash) -> Option<Transaction> {
-        self.items.get(txid).map(|tx| tx.clone())
-    }
-
     pub fn index(&self) -> &dyn ReadStore {
         &self.index
     }
