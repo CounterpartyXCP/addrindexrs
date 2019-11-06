@@ -6,29 +6,32 @@ use bitcoin::util::hash::BitcoinHash;
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
-use std::collections::{HashMap, HashSet};
-use std::iter::FromIterator;
+use std::collections::HashSet;
 use std::sync::RwLock;
 
 use crate::daemon::Daemon;
 use crate::errors::*;
-use crate::metrics::{
-    Counter, Gauge, HistogramOpts, HistogramTimer, HistogramVec, MetricOpts, Metrics,
-};
 use crate::signal::Waiter;
 use crate::store::{ReadStore, Row, WriteStore};
 use crate::util::{
-    full_hash, hash_prefix, spawn_thread, Bytes, FullHash, HashPrefix, HeaderEntry, HeaderList,
+    full_hash, hash_prefix, spawn_thread, Bytes,
+    FullHash, HashPrefix, HeaderEntry, HeaderList,
     HeaderMap, SyncChannel, HASH_PREFIX_LEN,
 };
 
+//
+// Key of a row storing an input of a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxInKey {
     pub code: u8,
-    pub prev_hash_prefix: HashPrefix,
-    pub prev_index: u16,
+    pub prev_txid_prefix: HashPrefix,
+    pub prev_vout: u16,
 }
 
+//
+// Row storing an input of a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxInRow {
     key: TxInKey,
@@ -40,18 +43,18 @@ impl TxInRow {
         TxInRow {
             key: TxInKey {
                 code: b'I',
-                prev_hash_prefix: hash_prefix(&input.previous_output.txid[..]),
-                prev_index: input.previous_output.vout as u16,
+                prev_txid_prefix: hash_prefix(&input.previous_output.txid[..]),
+                prev_vout: input.previous_output.vout as u16,
             },
             txid_prefix: hash_prefix(&txid[..]),
         }
     }
 
-    pub fn filter(txid: &Sha256dHash, output_index: usize) -> Bytes {
+    pub fn filter(txid: &Sha256dHash, vout: usize) -> Bytes {
         bincode::serialize(&TxInKey {
             code: b'I',
-            prev_hash_prefix: hash_prefix(&txid[..]),
-            prev_index: output_index as u16,
+            prev_txid_prefix: hash_prefix(&txid[..]),
+            prev_vout: vout as u16,
         })
         .unwrap()
     }
@@ -68,26 +71,34 @@ impl TxInRow {
     }
 }
 
+//
+// Key of a row storing an output of a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxOutKey {
     code: u8,
     script_hash_prefix: HashPrefix,
 }
 
+//
+// Row storing an output of a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxOutRow {
     key: TxOutKey,
     pub txid_prefix: HashPrefix,
+    pub vout: u16,
 }
 
 impl TxOutRow {
-    pub fn new(txid: &Sha256dHash, output: &TxOut) -> TxOutRow {
+    pub fn new(txid: &Sha256dHash, vout: u32, output: &TxOut) -> TxOutRow {
         TxOutRow {
             key: TxOutKey {
                 code: b'O',
                 script_hash_prefix: hash_prefix(&compute_script_hash(&output.script_pubkey[..])),
             },
             txid_prefix: hash_prefix(&txid[..]),
+            vout: vout as u16,
         }
     }
 
@@ -111,25 +122,30 @@ impl TxOutRow {
     }
 }
 
+//
+// Key of a row storing a transaction
+//
 #[derive(Serialize, Deserialize)]
 pub struct TxKey {
     code: u8,
     pub txid: FullHash,
 }
 
+//
+// Row storing a transaction
+//
+#[derive(Serialize, Deserialize)]
 pub struct TxRow {
     pub key: TxKey,
-    pub height: u32, // value
 }
 
 impl TxRow {
-    pub fn new(txid: &Sha256dHash, height: u32) -> TxRow {
+    pub fn new(txid: &Sha256dHash) -> TxRow {
         TxRow {
             key: TxKey {
                 code: b'T',
                 txid: full_hash(&txid[..]),
             },
-            height,
         }
     }
 
@@ -143,25 +159,28 @@ impl TxRow {
 
     pub fn to_row(&self) -> Row {
         Row {
-            key: bincode::serialize(&self.key).unwrap(),
-            value: bincode::serialize(&self.height).unwrap(),
+            key: bincode::serialize(&self).unwrap(),
+            value: vec![],
         }
     }
 
     pub fn from_row(row: &Row) -> TxRow {
-        TxRow {
-            key: bincode::deserialize(&row.key).expect("failed to parse TxKey"),
-            height: bincode::deserialize(&row.value).expect("failed to parse height"),
-        }
+        bincode::deserialize(&row.key).expect("failed to parse TxRow")
     }
 }
 
+//
+// Key of a row storing a block
+//
 #[derive(Serialize, Deserialize)]
 struct BlockKey {
     code: u8,
     hash: FullHash,
 }
 
+//
+// Compute the script hash of a scriptpubkey
+//
 pub fn compute_script_hash(data: &[u8]) -> FullHash {
     let mut hash = FullHash::default();
     let mut sha2 = Sha256::new();
@@ -170,10 +189,10 @@ pub fn compute_script_hash(data: &[u8]) -> FullHash {
     hash
 }
 
-pub fn index_transaction<'a>(
-    txn: &'a Transaction,
-    height: usize,
-) -> impl 'a + Iterator<Item = Row> {
+//
+// Index a transaction
+//
+pub fn index_transaction<'a>(txn: &'a Transaction) -> impl 'a + Iterator<Item = Row> {
     let null_hash = Sha256dHash::default();
     let txid: Sha256dHash = txn.txid();
 
@@ -184,18 +203,22 @@ pub fn index_transaction<'a>(
             Some(TxInRow::new(&txid, &input).to_row())
         }
     });
+
     let outputs = txn
         .output
         .iter()
-        .map(move |output| TxOutRow::new(&txid, &output).to_row());
+        .enumerate()
+        .map(move |(vout, output)| TxOutRow::new(&txid, vout as u32, &output).to_row());
 
-    // Persist transaction ID and confirmed height
     inputs
         .chain(outputs)
-        .chain(std::iter::once(TxRow::new(&txid, height as u32).to_row()))
+        .chain(std::iter::once(TxRow::new(&txid).to_row()))
 }
 
-pub fn index_block<'a>(block: &'a Block, height: usize) -> impl 'a + Iterator<Item = Row> {
+//
+// Index a block
+//
+pub fn index_block<'a>(block: &'a Block) -> impl 'a + Iterator<Item = Row> {
     let blockhash = block.bitcoin_hash();
     // Persist block hash and header
     let row = Row {
@@ -209,10 +232,13 @@ pub fn index_block<'a>(block: &'a Block, height: usize) -> impl 'a + Iterator<It
     block
         .txdata
         .iter()
-        .flat_map(move |txn| index_transaction(&txn, height))
+        .flat_map(move |txn| index_transaction(&txn))
         .chain(std::iter::once(row))
 }
 
+//
+// Retrieve the last indexed block
+//
 pub fn last_indexed_block(blockhash: &Sha256dHash) -> Row {
     // Store last indexed block (i.e. all previous blocks were indexed)
     Row {
@@ -221,6 +247,9 @@ pub fn last_indexed_block(blockhash: &Sha256dHash) -> Row {
     }
 }
 
+//
+// Retrieve the hashes of all the indexed blocks
+//
 pub fn read_indexed_blockhashes(store: &dyn ReadStore) -> HashSet<Sha256dHash> {
     let mut result = HashSet::new();
     for row in store.scan(b"B") {
@@ -230,6 +259,9 @@ pub fn read_indexed_blockhashes(store: &dyn ReadStore) -> HashSet<Sha256dHash> {
     result
 }
 
+//
+// Retrieve the headers of all the indexed blocks
+//
 fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
     let latest_blockhash: Sha256dHash = match store.get(b"L") {
         // latest blockheader persisted in the DB.
@@ -237,15 +269,18 @@ fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
         None => Sha256dHash::default(),
     };
     trace!("lastest indexed blockhash: {}", latest_blockhash);
+
     let mut map = HeaderMap::new();
     for row in store.scan(b"B") {
         let key: BlockKey = bincode::deserialize(&row.key).unwrap();
         let header: BlockHeader = deserialize(&row.value).unwrap();
         map.insert(deserialize(&key.hash).unwrap(), header);
     }
+
     let mut headers = vec![];
     let null_hash = Sha256dHash::default();
     let mut blockhash = latest_blockhash;
+
     while blockhash != null_hash {
         let header = map
             .remove(&blockhash)
@@ -253,7 +288,9 @@ fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
         blockhash = header.prev_blockhash;
         headers.push(header);
     }
+
     headers.reverse();
+
     assert_eq!(
         headers
             .first()
@@ -261,6 +298,7 @@ fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
             .unwrap_or(null_hash),
         null_hash
     );
+
     assert_eq!(
         headers
             .last()
@@ -268,69 +306,20 @@ fn read_indexed_headers(store: &dyn ReadStore) -> HeaderList {
             .unwrap_or(null_hash),
         latest_blockhash
     );
+
     let mut result = HeaderList::empty();
     let entries = result.order(headers);
     result.apply(entries, latest_blockhash);
     result
 }
 
-struct Stats {
-    blocks: Counter,
-    txns: Counter,
-    vsize: Counter,
-    height: Gauge,
-    duration: HistogramVec,
-}
-
-impl Stats {
-    fn new(metrics: &Metrics) -> Stats {
-        Stats {
-            blocks: metrics.counter(MetricOpts::new(
-                "electrs_index_blocks",
-                "# of indexed blocks",
-            )),
-            txns: metrics.counter(MetricOpts::new(
-                "electrs_index_txns",
-                "# of indexed transactions",
-            )),
-            vsize: metrics.counter(MetricOpts::new(
-                "electrs_index_vsize",
-                "# of indexed vbytes",
-            )),
-            height: metrics.gauge(MetricOpts::new(
-                "electrs_index_height",
-                "Last indexed block's height",
-            )),
-            duration: metrics.histogram_vec(
-                HistogramOpts::new("electrs_index_duration", "indexing duration (in seconds)"),
-                &["step"],
-            ),
-        }
-    }
-
-    fn update(&self, block: &Block, height: usize) {
-        self.blocks.inc();
-        self.txns.inc_by(block.txdata.len() as i64);
-        for tx in &block.txdata {
-            self.vsize.inc_by(tx.get_weight() as i64 / 4);
-        }
-        self.update_height(height);
-    }
-
-    fn update_height(&self, height: usize) {
-        self.height.set(height as i64);
-    }
-
-    fn start_timer(&self, step: &str) -> HistogramTimer {
-        self.duration.with_label_values(&[step]).start_timer()
-    }
-}
-
+//
+// Indexer
+//
 pub struct Index {
     // TODO: store also latest snapshot.
     headers: RwLock<HeaderList>,
     daemon: Daemon,
-    stats: Stats,
     batch_size: usize,
 }
 
@@ -338,16 +327,12 @@ impl Index {
     pub fn load(
         store: &dyn ReadStore,
         daemon: &Daemon,
-        metrics: &Metrics,
         batch_size: usize,
     ) -> Result<Index> {
-        let stats = Stats::new(metrics);
         let headers = read_indexed_headers(store);
-        stats.height.set((headers.len() as i64) - 1);
         Ok(Index {
             headers: RwLock::new(headers),
             daemon: daemon.reconnect()?,
-            stats,
             batch_size,
         })
     }
@@ -355,11 +340,6 @@ impl Index {
     pub fn reload(&self, store: &dyn ReadStore) {
         let mut headers = self.headers.write().unwrap();
         *headers = read_indexed_headers(store);
-    }
-
-    pub fn best_header(&self) -> Option<HeaderEntry> {
-        let headers = self.headers.read().unwrap();
-        headers.header_by_blockhash(&headers.tip()).cloned()
     }
 
     pub fn get_header(&self, height: usize) -> Option<HeaderEntry> {
@@ -373,21 +353,21 @@ impl Index {
     pub fn update(&self, store: &impl WriteStore, waiter: &Waiter) -> Result<Sha256dHash> {
         let daemon = self.daemon.reconnect()?;
         let tip = daemon.getbestblockhash()?;
+
         let new_headers: Vec<HeaderEntry> = {
             let indexed_headers = self.headers.read().unwrap();
             indexed_headers.order(daemon.get_new_headers(&indexed_headers, &tip)?)
         };
+
         if let Some(latest_header) = new_headers.last() {
             info!("{:?} ({} left to index)", latest_header, new_headers.len());
         };
-        let height_map = HashMap::<Sha256dHash, usize>::from_iter(
-            new_headers.iter().map(|h| (*h.hash(), h.height())),
-        );
 
         let chan = SyncChannel::new(1);
         let sender = chan.sender();
         let blockhashes: Vec<Sha256dHash> = new_headers.iter().map(|h| *h.hash()).collect();
         let batch_size = self.batch_size;
+
         let fetcher = spawn_thread("fetcher", move || {
             for chunk in blockhashes.chunks(batch_size) {
                 sender
@@ -398,41 +378,31 @@ impl Index {
                 .send(Ok(vec![]))
                 .expect("failed sending explicit end of stream");
         });
+
         loop {
             waiter.poll()?;
-            let timer = self.stats.start_timer("fetch");
+
             let batch = chan
                 .receiver()
                 .recv()
                 .expect("block fetch exited prematurely")?;
-            timer.observe_duration();
+
             if batch.is_empty() {
                 break;
             }
 
             let rows_iter = batch.iter().flat_map(|block| {
                 let blockhash = block.bitcoin_hash();
-                let height = *height_map
-                    .get(&blockhash)
-                    .unwrap_or_else(|| panic!("missing header for block {}", blockhash));
-
-                self.stats.update(block, height); // TODO: update stats after the block is indexed
-                index_block(block, height).chain(std::iter::once(last_indexed_block(&blockhash)))
+                index_block(block).chain(std::iter::once(last_indexed_block(&blockhash)))
             });
 
-            let timer = self.stats.start_timer("index+write");
             store.write(rows_iter);
-            timer.observe_duration();
         }
-        let timer = self.stats.start_timer("flush");
-        store.flush(); // make sure no row is left behind
-        timer.observe_duration();
 
+        store.flush(); // make sure no row is left behind
         fetcher.join().expect("block fetcher failed");
         self.headers.write().unwrap().apply(new_headers, tip);
         assert_eq!(tip, self.headers.read().unwrap().tip());
-        self.stats
-            .update_height(self.headers.read().unwrap().len() - 1);
         Ok(tip)
     }
 }

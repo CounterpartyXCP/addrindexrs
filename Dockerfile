@@ -10,13 +10,4 @@ USER user
 WORKDIR /home/user
 COPY ./ /home/user
 
-RUN cargo build --release
-RUN cargo install --path .
-
-# Electrum RPC
-EXPOSE 50001
-
-# Prometheus monitoring
-EXPOSE 4224
-
-STOPSIGNAL SIGINT
+RUN cargo check

@@ -4,19 +4,18 @@ use hex;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::iter::FromIterator;
 use std::ops::Bound;
-use std::sync::Mutex;
 
-use crate::daemon::{Daemon, MempoolEntry};
+use crate::daemon::Daemon;
 use crate::errors::*;
 use crate::index::index_transaction;
-use crate::metrics::{
-    Gauge, GaugeVec, HistogramOpts, HistogramTimer, HistogramVec, MetricOpts, Metrics,
-};
 use crate::store::{ReadStore, Row};
 use crate::util::Bytes;
 
-const VSIZE_BIN_WIDTH: u32 = 100_000; // in vbytes
 
+//
+// BTree emulating a db store
+// for mempool transactions
+//
 struct MempoolStore {
     map: BTreeMap<Bytes, Vec<Bytes>>,
 }
@@ -29,7 +28,7 @@ impl MempoolStore {
     }
 
     fn add(&mut self, tx: &Transaction) {
-        let rows = index_transaction(tx, 0);
+        let rows = index_transaction(tx);
         for row in rows {
             let (key, value) = row.into_pair();
             self.map.entry(key).or_insert_with(|| vec![]).push(value);
@@ -37,7 +36,7 @@ impl MempoolStore {
     }
 
     fn remove(&mut self, tx: &Transaction) {
-        let rows = index_transaction(tx, 0);
+        let rows = index_transaction(tx);
         for row in rows {
             let (key, value) = row.into_pair();
             let no_values_left = {
@@ -69,6 +68,7 @@ impl ReadStore for MempoolStore {
     fn get(&self, key: &[u8]) -> Option<Bytes> {
         Some(self.map.get(key)?.last()?.to_vec())
     }
+
     fn scan(&self, prefix: &[u8]) -> Vec<Row> {
         let range = self
             .map
@@ -89,101 +89,20 @@ impl ReadStore for MempoolStore {
     }
 }
 
-struct Item {
-    tx: Transaction,     // stored for faster retrieval and index removal
-    entry: MempoolEntry, // caches mempool fee rates
-}
-
-struct Stats {
-    count: Gauge,
-    update: HistogramVec,
-    vsize: GaugeVec,
-    max_fee_rate: Mutex<f32>,
-}
-
-impl Stats {
-    fn start_timer(&self, step: &str) -> HistogramTimer {
-        self.update.with_label_values(&[step]).start_timer()
-    }
-
-    fn update(&self, entries: &[&MempoolEntry]) {
-        let mut bands: Vec<(f32, u32)> = vec![];
-        let mut fee_rate = 1.0f32; // [sat/vbyte]
-        let mut vsize = 0u32; // vsize of transactions paying <= fee_rate
-        for e in entries {
-            while fee_rate < e.fee_per_vbyte() {
-                bands.push((fee_rate, vsize));
-                fee_rate *= 2.0;
-            }
-            vsize += e.vsize();
-        }
-        let mut max_fee_rate = self.max_fee_rate.lock().unwrap();
-        loop {
-            bands.push((fee_rate, vsize));
-            if fee_rate < *max_fee_rate {
-                fee_rate *= 2.0;
-                continue;
-            }
-            *max_fee_rate = fee_rate;
-            break;
-        }
-        drop(max_fee_rate);
-        for (fee_rate, vsize) in bands {
-            // labels should be ordered by fee_rate value
-            let label = format!("≤{:10.0}", fee_rate);
-            self.vsize
-                .with_label_values(&[&label])
-                .set(f64::from(vsize));
-        }
-    }
-}
-
+//
+// Tracker managing mempool transactions
+//
 pub struct Tracker {
-    items: HashMap<Sha256dHash, Item>,
+    items: HashMap<Sha256dHash, Transaction>,
     index: MempoolStore,
-    histogram: Vec<(f32, u32)>,
-    stats: Stats,
 }
 
 impl Tracker {
-    pub fn new(metrics: &Metrics) -> Tracker {
+    pub fn new() -> Tracker {
         Tracker {
             items: HashMap::new(),
             index: MempoolStore::new(),
-            histogram: vec![],
-            stats: Stats {
-                count: metrics.gauge(MetricOpts::new(
-                    "electrs_mempool_count",
-                    "# of mempool transactions",
-                )),
-                update: metrics.histogram_vec(
-                    HistogramOpts::new(
-                        "electrs_mempool_update",
-                        "Time to update mempool (in seconds)",
-                    ),
-                    &["step"],
-                ),
-                vsize: metrics.gauge_vec(
-                    MetricOpts::new(
-                        "electrs_mempool_vsize",
-                        "Total vsize of transactions paying at most given fee rate",
-                    ),
-                    &["fee_rate"],
-                ),
-                max_fee_rate: Mutex::new(1.0),
-            },
         }
-    }
-
-    pub fn get_txn(&self, txid: &Sha256dHash) -> Option<Transaction> {
-        self.items.get(txid).map(|stats| stats.tx.clone())
-    }
-
-    /// Returns vector of (fee_rate, vsize) pairs, where fee_{n-1} > fee_n and vsize_n is the
-    /// total virtual size of mempool transactions with fee in the bin [fee_{n-1}, fee_n].
-    /// Note: fee_{-1} is implied to be infinite.
-    pub fn fee_histogram(&self) -> &Vec<(f32, u32)> {
-        &self.histogram
     }
 
     pub fn index(&self) -> &dyn ReadStore {
@@ -191,94 +110,48 @@ impl Tracker {
     }
 
     pub fn update(&mut self, daemon: &Daemon) -> Result<()> {
-        let timer = self.stats.start_timer("fetch");
         let new_txids = daemon
             .getmempooltxids()
             .chain_err(|| "failed to update mempool from daemon")?;
+
         let old_txids = HashSet::from_iter(self.items.keys().cloned());
-        timer.observe_duration();
 
-        let timer = self.stats.start_timer("add");
         let txids_iter = new_txids.difference(&old_txids);
-        let entries: Vec<(&Sha256dHash, MempoolEntry)> = txids_iter
-            .filter_map(|txid| {
-                match daemon.getmempoolentry(txid) {
-                    Ok(entry) => Some((txid, entry)),
-                    Err(err) => {
-                        warn!("no mempool entry {}: {}", txid, err); // e.g. new block or RBF
-                        None // ignore this transaction for now
-                    }
-                }
-            })
-            .collect();
-        if !entries.is_empty() {
-            let txids: Vec<&Sha256dHash> = entries.iter().map(|(txid, _)| *txid).collect();
-            let txs = match daemon.gettransactions(&txids) {
-                Ok(txs) => txs,
-                Err(err) => {
-                    warn!("failed to get transactions {:?}: {}", txids, err); // e.g. new block or RBF
-                    return Ok(()); // keep the mempool until next update()
-                }
-            };
-            for ((txid, entry), tx) in entries.into_iter().zip(txs.into_iter()) {
-                assert_eq!(tx.txid(), *txid);
-                self.add(txid, tx, entry);
-            }
-        }
-        timer.observe_duration();
 
-        let timer = self.stats.start_timer("remove");
+        let txids: Vec<&Sha256dHash> = txids_iter.collect();
+
+        let txs = match daemon.gettransactions(&txids) {
+            Ok(txs) => txs,
+            Err(err) => {
+                warn!("failed to get transactions {:?}: {}", txids, err); // e.g. new block or RBF
+                return Ok(()); // keep the mempool until next update()
+            }
+        };
+
+        trace!("updated mempool with {} transactions from daemon", txs.len());
+
+        for (txid, tx) in txids.into_iter().zip(txs.into_iter()) {
+            assert_eq!(tx.txid(), *txid);
+            self.add(txid, tx);
+        }
+
         for txid in old_txids.difference(&new_txids) {
             self.remove(txid);
         }
-        timer.observe_duration();
 
-        let timer = self.stats.start_timer("fees");
-        self.update_fee_histogram();
-        timer.observe_duration();
-
-        self.stats.count.set(self.items.len() as i64);
         Ok(())
     }
 
-    fn add(&mut self, txid: &Sha256dHash, tx: Transaction, entry: MempoolEntry) {
+    fn add(&mut self, txid: &Sha256dHash, tx: Transaction) {
         self.index.add(&tx);
-        self.items.insert(*txid, Item { tx, entry });
+        self.items.insert(*txid, tx);
     }
 
     fn remove(&mut self, txid: &Sha256dHash) {
-        let stats = self
+        let tx = self
             .items
             .remove(txid)
             .unwrap_or_else(|| panic!("missing mempool tx {}", txid));
-        self.index.remove(&stats.tx);
+        self.index.remove(&tx);
     }
-
-    fn update_fee_histogram(&mut self) {
-        let mut entries: Vec<&MempoolEntry> = self.items.values().map(|stat| &stat.entry).collect();
-        entries.sort_unstable_by(|e1, e2| {
-            e1.fee_per_vbyte().partial_cmp(&e2.fee_per_vbyte()).unwrap()
-        });
-        self.histogram = electrum_fees(&entries);
-        self.stats.update(&entries);
-    }
-}
-
-fn electrum_fees(entries: &[&MempoolEntry]) -> Vec<(f32, u32)> {
-    let mut histogram = vec![];
-    let mut bin_size = 0;
-    let mut last_fee_rate = None;
-    for e in entries.iter().rev() {
-        last_fee_rate = Some(e.fee_per_vbyte());
-        bin_size += e.vsize();
-        if bin_size > VSIZE_BIN_WIDTH {
-            // vsize of transactions paying >= e.fee_per_vbyte()
-            histogram.push((e.fee_per_vbyte(), bin_size));
-            bin_size = 0;
-        }
-    }
-    if let Some(fee_rate) = last_fee_rate {
-        histogram.push((fee_rate, bin_size));
-    }
-    histogram
 }

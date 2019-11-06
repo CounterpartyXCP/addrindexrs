@@ -15,15 +15,20 @@ use stderrlog;
 use crate::daemon::CookieGetter;
 use crate::errors::*;
 
+//
+// Default IP address of the RPC server
+//
 const DEFAULT_SERVER_ADDRESS: [u8; 4] = [127, 0, 0, 1]; // by default, serve on IPv4 localhost
+
 
 mod internal {
     #![allow(unused)]
-
     include!(concat!(env!("OUT_DIR"), "/configure_me_config.rs"));
 }
 
-/// A simple error type representing invalid UTF-8 input.
+//
+// A simple error type representing invalid UTF-8 input.
+//
 pub struct InvalidUtf8(OsString);
 
 impl fmt::Display for InvalidUtf8 {
@@ -32,7 +37,9 @@ impl fmt::Display for InvalidUtf8 {
     }
 }
 
-/// An error that might happen when resolving an address
+//
+// An error that might happen when resolving an address
+//
 pub enum AddressError {
     ResolvError { addr: String, err: std::io::Error },
     NoAddrError(String),
@@ -49,10 +56,10 @@ impl fmt::Display for AddressError {
     }
 }
 
-/// Newtype for an address that is parsed as `String`
-///
-/// The main point of this newtype is to provide better description than what `String` type
-/// provides.
+// Newtype for an address that is parsed as `String`
+//
+// The main point of this newtype is to provide better description than what `String` type
+// provides.
 #[derive(Deserialize)]
 pub struct ResolvAddr(String);
 
@@ -90,7 +97,9 @@ impl ResolvAddr {
     }
 }
 
-/// This newtype implements `ParseArg` for `Network`.
+//
+// This newtype implements `ParseArg` for `Network`.
+//
 #[derive(Deserialize)]
 pub struct BitcoinNetwork(Network);
 
@@ -120,7 +129,9 @@ impl Into<Network> for BitcoinNetwork {
     }
 }
 
-/// Parsed and post-processed configuration
+//
+// Parsed and post-processed configuration
+//
 #[derive(Debug)]
 pub struct Config {
     // See below for the documentation of each field:
@@ -130,14 +141,12 @@ pub struct Config {
     pub daemon_dir: PathBuf,
     pub daemon_rpc_addr: SocketAddr,
     pub cookie: Option<String>,
-    pub electrum_rpc_addr: SocketAddr,
-    pub monitoring_addr: SocketAddr,
+    pub indexer_rpc_addr: SocketAddr,
     pub jsonrpc_import: bool,
     pub index_batch_size: usize,
     pub bulk_index_threads: usize,
     pub tx_cache_size: usize,
     pub txid_limit: usize,
-    pub server_banner: String,
     pub blocktxids_cache_size: usize,
 }
 
@@ -156,12 +165,14 @@ impl Config {
     pub fn from_args() -> Config {
         use internal::ResultExt;
 
-        let system_config: &OsStr = "/etc/electrs/config.toml".as_ref();
+        let system_config: &OsStr = "/etc/addrindexrs/config.toml".as_ref();
+
         let home_config = home_dir().map(|mut dir| {
-            dir.extend(&[".electrs", "config.toml"]);
+            dir.extend(&[".addrindexrs", "config.toml"]);
             dir
         });
-        let cwd_config: &OsStr = "electrs.toml".as_ref();
+
+        let cwd_config: &OsStr = "addrindexrs.toml".as_ref();
         let configs = std::iter::once(cwd_config)
             .chain(home_config.as_ref().map(AsRef::as_ref))
             .chain(std::iter::once(system_config));
@@ -183,27 +194,20 @@ impl Config {
             Network::Testnet => 18332,
             Network::Regtest => 18443,
         };
-        let default_electrum_port = match config.network {
+
+        let default_indexer_port = match config.network {
             Network::Bitcoin => 50001,
             Network::Testnet => 60001,
             Network::Regtest => 60401,
-        };
-        let default_monitoring_port = match config.network {
-            Network::Bitcoin => 4224,
-            Network::Testnet => 14224,
-            Network::Regtest => 24224,
         };
 
         let daemon_rpc_addr: SocketAddr = config.daemon_rpc_addr.map_or(
             (DEFAULT_SERVER_ADDRESS, default_daemon_port).into(),
             ResolvAddr::resolve_or_exit,
         );
-        let electrum_rpc_addr: SocketAddr = config.electrum_rpc_addr.map_or(
-            (DEFAULT_SERVER_ADDRESS, default_electrum_port).into(),
-            ResolvAddr::resolve_or_exit,
-        );
-        let monitoring_addr: SocketAddr = config.monitoring_addr.map_or(
-            (DEFAULT_SERVER_ADDRESS, default_monitoring_port).into(),
+
+        let indexer_rpc_addr: SocketAddr = config.indexer_rpc_addr.map_or(
+            (DEFAULT_SERVER_ADDRESS, default_indexer_port).into(),
             ResolvAddr::resolve_or_exit,
         );
 
@@ -218,23 +222,28 @@ impl Config {
             config
                 .verbose
                 .try_into()
-                .expect("Overflow: Running electrs on less than 32 bit devices is unsupported"),
+                .expect("Overflow: Running addrindexrs on less than 32 bit devices is unsupported"),
         );
+
         log.timestamp(if config.timestamp {
             stderrlog::Timestamp::Millisecond
         } else {
             stderrlog::Timestamp::Off
         });
+
         log.init().unwrap_or_else(|err| {
             eprintln!("Error: logging initialization failed: {}", err);
             std::process::exit(1)
         });
+
         // Could have been default, but it's useful to allow the user to specify 0 when overriding
         // configs.
         if config.bulk_index_threads == 0 {
             config.bulk_index_threads = num_cpus::get();
         }
+
         const MB: f32 = (1 << 20) as f32;
+
         let config = Config {
             log,
             network_type: config.network,
@@ -242,16 +251,15 @@ impl Config {
             daemon_dir: config.daemon_dir,
             daemon_rpc_addr,
             cookie: config.cookie,
-            electrum_rpc_addr,
-            monitoring_addr,
+            indexer_rpc_addr,
             jsonrpc_import: config.jsonrpc_import,
             index_batch_size: config.index_batch_size,
             bulk_index_threads: config.bulk_index_threads,
             tx_cache_size: (config.tx_cache_size_mb * MB) as usize,
             blocktxids_cache_size: (config.blocktxids_cache_size_mb * MB) as usize,
             txid_limit: config.txid_limit,
-            server_banner: config.server_banner,
         };
+
         eprintln!("{:?}", config);
         config
     }
@@ -269,6 +277,9 @@ impl Config {
     }
 }
 
+//
+// Auth cookie for bitcoind
+//
 struct StaticCookie {
     value: Vec<u8>,
 }

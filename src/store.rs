@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::util::Bytes;
 
+//
+// A row from the Db store
+//
 #[derive(Clone)]
 pub struct Row {
     pub key: Bytes,
@@ -15,6 +18,9 @@ impl Row {
     }
 }
 
+//
+// Traits for the Db store
+//
 pub trait ReadStore: Sync {
     fn get(&self, key: &[u8]) -> Option<Bytes>;
     fn scan(&self, prefix: &[u8]) -> Vec<Row>;
@@ -25,6 +31,9 @@ pub trait WriteStore: Sync {
     fn flush(&self);
 }
 
+//
+// Options
+//
 #[derive(Clone)]
 struct Options {
     path: PathBuf,
@@ -32,6 +41,9 @@ struct Options {
     low_memory: bool,
 }
 
+//
+// Db store
+//
 pub struct DBStore {
     db: rocksdb::DB,
     opts: Options,
@@ -98,6 +110,9 @@ impl DBStore {
     }
 }
 
+//
+// Iterator supporting scans of the Db store
+//
 pub struct ScanIterator<'a> {
     prefix: Vec<u8>,
     iter: rocksdb::DBIterator<'a>,
@@ -123,6 +138,9 @@ impl<'a> Iterator for ScanIterator<'a> {
     }
 }
 
+//
+// Read functions for the Db store
+//
 impl ReadStore for DBStore {
     fn get(&self, key: &[u8]) -> Option<Bytes> {
         self.db.get(key).unwrap().map(|v| v.to_vec())
@@ -147,6 +165,9 @@ impl ReadStore for DBStore {
     }
 }
 
+//
+// Write functions for the Db store
+//
 impl WriteStore for DBStore {
     fn write<I: IntoIterator<Item = Row>>(&self, rows: I) {
         let mut batch = rocksdb::WriteBatch::default();
@@ -168,12 +189,18 @@ impl WriteStore for DBStore {
     }
 }
 
+//
+// Close function for the Db store
+//
 impl Drop for DBStore {
     fn drop(&mut self) {
         trace!("closing DB at {:?}", self.opts.path);
     }
 }
 
+//
+// Compaction
+//
 fn full_compaction_marker() -> Row {
     Row {
         key: b"F".to_vec(),
@@ -185,6 +212,8 @@ pub fn full_compaction(store: DBStore) -> DBStore {
     store.flush();
     let store = store.compact().enable_compaction();
     store.write(vec![full_compaction_marker()]);
+    // Make sure full compaction marker isn't left behind
+    store.flush();
     store
 }
 
