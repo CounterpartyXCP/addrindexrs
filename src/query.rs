@@ -1,52 +1,43 @@
-use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode::deserialize;
-use bitcoin_hashes::hex::ToHex;
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
-use bitcoin_hashes::Hash;
-use crypto::digest::Digest;
-use crypto::sha2::Sha256;
-use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::app::App;
-use crate::cache::TransactionCache;
 use crate::errors::*;
-use crate::index::{compute_script_hash, TxInRow, TxOutRow, TxRow};
+use crate::index::{TxInRow, TxOutRow, TxRow};
 use crate::mempool::Tracker;
-use crate::metrics::{HistogramOpts, HistogramVec, Metrics};
-use crate::store::{ReadStore, Row};
-use crate::util::{FullHash, HashPrefix, HeaderEntry};
+use crate::store::ReadStore;
+use crate::util::HashPrefix;
 
-pub struct FundingOutput {
-    pub txn_id: Sha256dHash,
-    pub height: u32,
-    pub output_index: usize,
-    pub value: u64,
+//
+// Output of a Transaction
+//
+pub struct Txo {
+    pub txid: Sha256dHash,
+    pub vout: usize,
 }
 
-type OutPoint = (Sha256dHash, usize); // (txid, output_index)
+//
+// Input of a Transaction
+//
+type OutPoint = (Sha256dHash, usize); // (txid, vout)
 
 struct SpendingInput {
-    txn_id: Sha256dHash,
-    height: u32,
-    funding_output: OutPoint,
-    value: u64,
+    txid: Sha256dHash,
+    outpoint: OutPoint,
 }
 
+//
+// Status of an Address
+// (vectors of confirmed and unconfirmed outputs and inputs)
+//
 pub struct Status {
-    confirmed: (Vec<FundingOutput>, Vec<SpendingInput>),
-    mempool: (Vec<FundingOutput>, Vec<SpendingInput>),
-}
-
-fn calc_balance((funding, spending): &(Vec<FundingOutput>, Vec<SpendingInput>)) -> i64 {
-    let funded: u64 = funding.iter().map(|output| output.value).sum();
-    let spent: u64 = spending.iter().map(|input| input.value).sum();
-    funded as i64 - spent as i64
+    confirmed: (Vec<Txo>, Vec<SpendingInput>),
+    mempool: (Vec<Txo>, Vec<SpendingInput>),
 }
 
 impl Status {
-    fn funding(&self) -> impl Iterator<Item = &FundingOutput> {
+    fn funding(&self) -> impl Iterator<Item = &Txo> {
         self.confirmed.0.iter().chain(self.mempool.0.iter())
     }
 
@@ -54,173 +45,88 @@ impl Status {
         self.confirmed.1.iter().chain(self.mempool.1.iter())
     }
 
-    pub fn confirmed_balance(&self) -> i64 {
-        calc_balance(&self.confirmed)
-    }
-
-    pub fn mempool_balance(&self) -> i64 {
-        calc_balance(&self.mempool)
-    }
-
-    pub fn history(&self) -> Vec<(i32, Sha256dHash)> {
-        let mut txns_map = HashMap::<Sha256dHash, i32>::new();
+    pub fn history(&self) -> Vec<Sha256dHash> {
+        let mut txns = vec![];
         for f in self.funding() {
-            txns_map.insert(f.txn_id, f.height as i32);
+            txns.push(f.txid);
         }
         for s in self.spending() {
-            txns_map.insert(s.txn_id, s.height as i32);
+            txns.push(s.txid);
         }
-        let mut txns: Vec<(i32, Sha256dHash)> =
-            txns_map.into_iter().map(|item| (item.1, item.0)).collect();
         txns.sort_unstable();
+        txns.dedup();
         txns
     }
-
-    pub fn unspent(&self) -> Vec<&FundingOutput> {
-        let mut outputs_map = HashMap::<OutPoint, &FundingOutput>::new();
-        for f in self.funding() {
-            outputs_map.insert((f.txn_id, f.output_index), f);
-        }
-        for s in self.spending() {
-            if outputs_map.remove(&s.funding_output).is_none() {
-                warn!("failed to remove {:?}", s.funding_output);
-            }
-        }
-        let mut outputs = outputs_map
-            .into_iter()
-            .map(|item| item.1) // a reference to unspent output
-            .collect::<Vec<&FundingOutput>>();
-        outputs.sort_unstable_by_key(|out| out.height);
-        outputs
-    }
-
-    pub fn hash(&self) -> Option<FullHash> {
-        let txns = self.history();
-        if txns.is_empty() {
-            None
-        } else {
-            let mut hash = FullHash::default();
-            let mut sha2 = Sha256::new();
-            for (height, txn_id) in txns {
-                let part = format!("{}:{}:", txn_id.to_hex(), height);
-                sha2.input(part.as_bytes());
-            }
-            sha2.result(&mut hash);
-            Some(hash)
-        }
-    }
 }
 
-struct TxnHeight {
-    txn: Transaction,
-    height: u32,
-}
-
-fn merklize(left: Sha256dHash, right: Sha256dHash) -> Sha256dHash {
-    let data = [&left[..], &right[..]].concat();
-    Sha256dHash::hash(&data)
-}
-
-fn create_merkle_branch_and_root(
-    mut hashes: Vec<Sha256dHash>,
-    mut index: usize,
-) -> (Vec<Sha256dHash>, Sha256dHash) {
-    let mut merkle = vec![];
-    while hashes.len() > 1 {
-        if hashes.len() % 2 != 0 {
-            let last = *hashes.last().unwrap();
-            hashes.push(last);
-        }
-        index = if index % 2 == 0 { index + 1 } else { index - 1 };
-        merkle.push(hashes[index]);
-        index /= 2;
-        hashes = hashes
-            .chunks(2)
-            .map(|pair| merklize(pair[0], pair[1]))
-            .collect()
-    }
-    (merkle, hashes[0])
-}
-
-// TODO: the functions below can be part of ReadStore.
-fn txrow_by_txid(store: &dyn ReadStore, txid: &Sha256dHash) -> Option<TxRow> {
-    let key = TxRow::filter_full(&txid);
-    let value = store.get(&key)?;
-    Some(TxRow::from_row(&Row { key, value }))
-}
-
-fn txrows_by_prefix(store: &dyn ReadStore, txid_prefix: HashPrefix) -> Vec<TxRow> {
-    store
-        .scan(&TxRow::filter_prefix(txid_prefix))
-        .iter()
-        .map(|row| TxRow::from_row(row))
-        .collect()
-}
-
-fn txids_by_script_hash(store: &dyn ReadStore, script_hash: &[u8]) -> Vec<HashPrefix> {
-    store
-        .scan(&TxOutRow::filter(script_hash))
-        .iter()
-        .map(|row| TxOutRow::from_row(row).txid_prefix)
-        .collect()
-}
-
-fn txids_by_funding_output(
-    store: &dyn ReadStore,
-    txn_id: &Sha256dHash,
-    output_index: usize,
-) -> Vec<HashPrefix> {
-    store
-        .scan(&TxInRow::filter(&txn_id, output_index))
-        .iter()
-        .map(|row| TxInRow::from_row(row).txid_prefix)
-        .collect()
-}
-
+//
+// QUery tool for the indexer
+//
 pub struct Query {
     app: Arc<App>,
     tracker: RwLock<Tracker>,
-    tx_cache: TransactionCache,
     txid_limit: usize,
-    duration: HistogramVec,
 }
 
 impl Query {
     pub fn new(
         app: Arc<App>,
-        metrics: &Metrics,
-        tx_cache: TransactionCache,
         txid_limit: usize,
     ) -> Arc<Query> {
         Arc::new(Query {
             app,
-            tracker: RwLock::new(Tracker::new(metrics)),
-            tx_cache,
+            tracker: RwLock::new(Tracker::new()),
             txid_limit,
-            duration: metrics.histogram_vec(
-                HistogramOpts::new(
-                    "electrs_query_duration",
-                    "Time to update mempool (in seconds)",
-                ),
-                &["type"],
-            ),
         })
     }
 
-    fn load_txns_by_prefix(
+    fn get_txrows_by_prefix(
+        &self,
+        store: &dyn ReadStore,
+        prefix: HashPrefix
+    ) -> Vec<TxRow> {
+        store
+            .scan(&TxRow::filter_prefix(prefix))
+            .iter()
+            .map(|row| TxRow::from_row(row))
+            .collect()
+    }
+
+    fn get_txoutrows_by_script_hash(
+        &self,
+        store: &dyn ReadStore,
+        script_hash: &[u8]
+    ) -> Vec<TxOutRow> {
+        store
+            .scan(&TxOutRow::filter(script_hash))
+            .iter()
+            .map(|row| TxOutRow::from_row(row))
+            .collect()
+    }
+
+    fn get_prefixes_by_funding_txo(
+        &self,
+        store: &dyn ReadStore,
+        txid: &Sha256dHash,
+        vout: usize,
+    ) -> Vec<HashPrefix> {
+        store
+            .scan(&TxInRow::filter(&txid, vout))
+            .iter()
+            .map(|row| TxInRow::from_row(row).txid_prefix)
+            .collect()
+    }
+
+    fn get_txids_by_prefix(
         &self,
         store: &dyn ReadStore,
         prefixes: Vec<HashPrefix>,
-    ) -> Result<Vec<TxnHeight>> {
+    ) -> Result<Vec<Sha256dHash>> {
         let mut txns = vec![];
-        for txid_prefix in prefixes {
-            for tx_row in txrows_by_prefix(store, txid_prefix) {
+        for prefix in prefixes {
+            for tx_row in self.get_txrows_by_prefix(store, prefix) {
                 let txid: Sha256dHash = deserialize(&tx_row.key.txid).unwrap();
-                let txn = self.load_txn(&txid, Some(tx_row.height))?;
-                txns.push(TxnHeight {
-                    txn,
-                    height: tx_row.height,
-                })
+                txns.push(txid)
             }
         }
         Ok(txns)
@@ -229,295 +135,118 @@ impl Query {
     fn find_spending_input(
         &self,
         store: &dyn ReadStore,
-        funding: &FundingOutput,
+        txo: &Txo,
     ) -> Result<Option<SpendingInput>> {
-        let spending_txns: Vec<TxnHeight> = self.load_txns_by_prefix(
-            store,
-            txids_by_funding_output(store, &funding.txn_id, funding.output_index),
-        )?;
-        let mut spending_inputs = vec![];
-        for t in &spending_txns {
-            for input in t.txn.input.iter() {
-                if input.previous_output.txid == funding.txn_id
-                    && input.previous_output.vout == funding.output_index as u32
-                {
-                    spending_inputs.push(SpendingInput {
-                        txn_id: t.txn.txid(),
-                        height: t.height,
-                        funding_output: (funding.txn_id, funding.output_index),
-                        value: funding.value,
-                    })
-                }
-            }
+
+        let mut spendings = vec![];
+        let prefixes = self.get_prefixes_by_funding_txo(store, &txo.txid, txo.vout);
+        let txids = self.get_txids_by_prefix(store, prefixes)?;
+
+        for txid in &txids {
+            spendings.push(SpendingInput {
+                txid: *txid,
+                outpoint: (txo.txid, txo.vout),
+            })
         }
-        assert!(spending_inputs.len() <= 1);
-        Ok(if spending_inputs.len() == 1 {
-            Some(spending_inputs.remove(0))
+
+        assert!(spendings.len() <= 1);
+
+        Ok(if spendings.len() == 1 {
+            Some(spendings.remove(0))
         } else {
             None
         })
     }
 
-    fn find_funding_outputs(&self, t: &TxnHeight, script_hash: &[u8]) -> Vec<FundingOutput> {
+    fn find_funding_outputs(
+        &self,
+        store: &dyn ReadStore,
+        script_hash: &[u8]
+    ) -> Result<Vec<Txo>> {
+        let txout_rows = self.get_txoutrows_by_script_hash(store, script_hash);
+
         let mut result = vec![];
-        let txn_id = t.txn.txid();
-        for (index, output) in t.txn.output.iter().enumerate() {
-            if compute_script_hash(&output.script_pubkey[..]) == script_hash {
-                result.push(FundingOutput {
-                    txn_id,
-                    height: t.height,
-                    output_index: index,
-                    value: output.value,
+
+        for row in &txout_rows {
+            let txids = self.get_txids_by_prefix(store, vec![row.txid_prefix])?;
+            for txid in &txids {
+                result.push(Txo {
+                    txid: *txid,
+                    vout: row.vout as usize,
                 })
             }
         }
-        result
+
+        Ok(result)
     }
 
     fn confirmed_status(
         &self,
         script_hash: &[u8],
-    ) -> Result<(Vec<FundingOutput>, Vec<SpendingInput>)> {
+    ) -> Result<(Vec<Txo>, Vec<SpendingInput>)> {
         let mut funding = vec![];
         let mut spending = vec![];
         let read_store = self.app.read_store();
-        let txid_prefixes = txids_by_script_hash(read_store, script_hash);
-        // if the limit is enabled
-        if self.txid_limit > 0 && txid_prefixes.len() > self.txid_limit {
+
+        let txos = self.find_funding_outputs(read_store, script_hash)?;
+        if self.txid_limit > 0 && txos.len() > self.txid_limit {
             bail!(
                 "{}+ transactions found, query may take a long time",
-                txid_prefixes.len()
+                txos.len()
             );
         }
-        for t in self.load_txns_by_prefix(read_store, txid_prefixes)? {
-            funding.extend(self.find_funding_outputs(&t, script_hash));
-        }
-        for funding_output in &funding {
-            if let Some(spent) = self.find_spending_input(read_store, &funding_output)? {
+        funding.extend(txos);
+
+        for txo in &funding {
+            if let Some(spent) = self.find_spending_input(read_store, &txo)? {
                 spending.push(spent);
             }
         }
+
         Ok((funding, spending))
     }
 
     fn mempool_status(
         &self,
         script_hash: &[u8],
-        confirmed_funding: &[FundingOutput],
-    ) -> Result<(Vec<FundingOutput>, Vec<SpendingInput>)> {
+        confirmed_funding: &[Txo],
+    ) -> Result<(Vec<Txo>, Vec<SpendingInput>)> {
         let mut funding = vec![];
         let mut spending = vec![];
+
         let tracker = self.tracker.read().unwrap();
-        let txid_prefixes = txids_by_script_hash(tracker.index(), script_hash);
-        for t in self.load_txns_by_prefix(tracker.index(), txid_prefixes)? {
-            funding.extend(self.find_funding_outputs(&t, script_hash));
+
+        let txos = self.find_funding_outputs(tracker.index(), script_hash)?;
+        if self.txid_limit > 0 && txos.len() > self.txid_limit {
+            bail!(
+                "{}+ transactions found, query may take a long time",
+                txos.len()
+            );
         }
-        // // TODO: dedup outputs (somehow) both confirmed and in mempool (e.g. reorg?)
-        for funding_output in funding.iter().chain(confirmed_funding.iter()) {
-            if let Some(spent) = self.find_spending_input(tracker.index(), &funding_output)? {
+        funding.extend(txos);
+
+        for txo in funding.iter().chain(confirmed_funding.iter()) {
+            if let Some(spent) = self.find_spending_input(tracker.index(), &txo)? {
                 spending.push(spent);
             }
         }
+
         Ok((funding, spending))
     }
 
     pub fn status(&self, script_hash: &[u8]) -> Result<Status> {
-        let timer = self
-            .duration
-            .with_label_values(&["confirmed_status"])
-            .start_timer();
         let confirmed = self
             .confirmed_status(script_hash)
             .chain_err(|| "failed to get confirmed status")?;
-        timer.observe_duration();
 
-        let timer = self
-            .duration
-            .with_label_values(&["mempool_status"])
-            .start_timer();
         let mempool = self
             .mempool_status(script_hash, &confirmed.0)
             .chain_err(|| "failed to get mempool status")?;
-        timer.observe_duration();
 
         Ok(Status { confirmed, mempool })
     }
 
-    fn lookup_confirmed_blockhash(
-        &self,
-        tx_hash: &Sha256dHash,
-        block_height: Option<u32>,
-    ) -> Result<Option<Sha256dHash>> {
-        let blockhash = if self.tracker.read().unwrap().get_txn(&tx_hash).is_some() {
-            None // found in mempool (as unconfirmed transaction)
-        } else {
-            // Lookup in confirmed transactions' index
-            let height = match block_height {
-                Some(height) => height,
-                None => {
-                    txrow_by_txid(self.app.read_store(), &tx_hash)
-                        .chain_err(|| format!("not indexed tx {}", tx_hash))?
-                        .height
-                }
-            };
-            let header = self
-                .app
-                .index()
-                .get_header(height as usize)
-                .chain_err(|| format!("missing header at height {}", height))?;
-            Some(*header.hash())
-        };
-        Ok(blockhash)
-    }
-
-    // Internal API for transaction retrieval
-    fn load_txn(&self, txid: &Sha256dHash, block_height: Option<u32>) -> Result<Transaction> {
-        let _timer = self.duration.with_label_values(&["load_txn"]).start_timer();
-        self.tx_cache.get_or_else(&txid, || {
-            let blockhash = self.lookup_confirmed_blockhash(txid, block_height)?;
-            let value: Value = self
-                .app
-                .daemon()
-                .gettransaction_raw(txid, blockhash, /*verbose*/ false)?;
-            let value_hex: &str = value.as_str().chain_err(|| "non-string tx")?;
-            hex::decode(&value_hex).chain_err(|| "non-hex tx")
-        })
-    }
-
-    // Public API for transaction retrieval (for Electrum RPC)
-    pub fn get_transaction(&self, tx_hash: &Sha256dHash, verbose: bool) -> Result<Value> {
-        let _timer = self
-            .duration
-            .with_label_values(&["get_transaction"])
-            .start_timer();
-        let blockhash = self.lookup_confirmed_blockhash(tx_hash, /*block_height*/ None)?;
-        self.app
-            .daemon()
-            .gettransaction_raw(tx_hash, blockhash, verbose)
-    }
-
-    pub fn get_headers(&self, heights: &[usize]) -> Vec<HeaderEntry> {
-        let _timer = self
-            .duration
-            .with_label_values(&["get_headers"])
-            .start_timer();
-        let index = self.app.index();
-        heights
-            .iter()
-            .filter_map(|height| index.get_header(*height))
-            .collect()
-    }
-
-    pub fn get_best_header(&self) -> Result<HeaderEntry> {
-        let last_header = self.app.index().best_header();
-        Ok(last_header.chain_err(|| "no headers indexed")?.clone())
-    }
-
-    pub fn get_merkle_proof(
-        &self,
-        tx_hash: &Sha256dHash,
-        height: usize,
-    ) -> Result<(Vec<Sha256dHash>, usize)> {
-        let header_entry = self
-            .app
-            .index()
-            .get_header(height)
-            .chain_err(|| format!("missing block #{}", height))?;
-        let txids = self.app.daemon().getblocktxids(&header_entry.hash())?;
-        let pos = txids
-            .iter()
-            .position(|txid| txid == tx_hash)
-            .chain_err(|| format!("missing txid {}", tx_hash))?;
-        let (branch, _root) = create_merkle_branch_and_root(txids, pos);
-        Ok((branch, pos))
-    }
-
-    pub fn get_header_merkle_proof(
-        &self,
-        height: usize,
-        cp_height: usize,
-    ) -> Result<(Vec<Sha256dHash>, Sha256dHash)> {
-        if cp_height < height {
-            bail!("cp_height #{} < height #{}", cp_height, height);
-        }
-
-        let best_height = self.get_best_header()?.height();
-        if best_height < cp_height {
-            bail!(
-                "cp_height #{} above best block height #{}",
-                cp_height,
-                best_height
-            );
-        }
-
-        let heights: Vec<usize> = (0..=cp_height).collect();
-        let header_hashes: Vec<Sha256dHash> = self
-            .get_headers(&heights)
-            .into_iter()
-            .map(|h| *h.hash())
-            .collect();
-        assert_eq!(header_hashes.len(), heights.len());
-        Ok(create_merkle_branch_and_root(header_hashes, height))
-    }
-
-    pub fn get_id_from_pos(
-        &self,
-        height: usize,
-        tx_pos: usize,
-        want_merkle: bool,
-    ) -> Result<(Sha256dHash, Vec<Sha256dHash>)> {
-        let header_entry = self
-            .app
-            .index()
-            .get_header(height)
-            .chain_err(|| format!("missing block #{}", height))?;
-
-        let txids = self.app.daemon().getblocktxids(header_entry.hash())?;
-        let txid = *txids
-            .get(tx_pos)
-            .chain_err(|| format!("No tx in position #{} in block #{}", tx_pos, height))?;
-
-        let branch = if want_merkle {
-            create_merkle_branch_and_root(txids, tx_pos).0
-        } else {
-            vec![]
-        };
-        Ok((txid, branch))
-    }
-
-    pub fn broadcast(&self, txn: &Transaction) -> Result<Sha256dHash> {
-        self.app.daemon().broadcast(txn)
-    }
-
     pub fn update_mempool(&self) -> Result<()> {
-        let _timer = self
-            .duration
-            .with_label_values(&["update_mempool"])
-            .start_timer();
         self.tracker.write().unwrap().update(self.app.daemon())
-    }
-
-    /// Returns [vsize, fee_rate] pairs (measured in vbytes and satoshis).
-    pub fn get_fee_histogram(&self) -> Vec<(f32, u32)> {
-        self.tracker.read().unwrap().fee_histogram().clone()
-    }
-
-    // Fee rate [BTC/kB] to be confirmed in `blocks` from now.
-    pub fn estimate_fee(&self, blocks: usize) -> f32 {
-        let mut total_vsize = 0u32;
-        let mut last_fee_rate = 0.0;
-        let blocks_in_vbytes = (blocks * 1_000_000) as u32; // assume ~1MB blocks
-        for (fee_rate, vsize) in self.tracker.read().unwrap().fee_histogram() {
-            last_fee_rate = *fee_rate;
-            total_vsize += vsize;
-            if total_vsize >= blocks_in_vbytes {
-                break; // under-estimate the fee rate a bit
-            }
-        }
-        last_fee_rate * 1e-5 // [BTC/kB] = 10^5 [sat/B]
-    }
-
-    pub fn get_banner(&self) -> Result<String> {
-        self.app.get_banner()
     }
 }

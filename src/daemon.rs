@@ -1,7 +1,7 @@
 use base64;
 use bitcoin::blockdata::block::{Block, BlockHeader};
 use bitcoin::blockdata::transaction::Transaction;
-use bitcoin::consensus::encode::{deserialize, serialize};
+use bitcoin::consensus::encode::deserialize;
 use bitcoin::network::constants::Network;
 use bitcoin::util::hash::BitcoinHash;
 use bitcoin_hashes::hex::{FromHex, ToHex};
@@ -19,9 +19,9 @@ use std::time::Duration;
 
 use crate::cache::BlockTxIDsCache;
 use crate::errors::*;
-use crate::metrics::{HistogramOpts, HistogramVec, Metrics};
 use crate::signal::Waiter;
 use crate::util::HeaderList;
+
 
 fn parse_hash(value: &Value) -> Result<Sha256dHash> {
     Ok(Sha256dHash::from_hex(
@@ -115,34 +115,6 @@ struct NetworkInfo {
     subversion: String,
 }
 
-pub struct MempoolEntry {
-    fee: u64,   // in satoshis
-    vsize: u32, // in virtual bytes (= weight/4)
-    fee_per_vbyte: f32,
-}
-
-impl MempoolEntry {
-    fn new(fee: u64, vsize: u32) -> MempoolEntry {
-        MempoolEntry {
-            fee,
-            vsize,
-            fee_per_vbyte: fee as f32 / vsize as f32,
-        }
-    }
-
-    pub fn fee_per_vbyte(&self) -> f32 {
-        self.fee_per_vbyte
-    }
-
-    pub fn fee(&self) -> u64 {
-        self.fee
-    }
-
-    pub fn vsize(&self) -> u32 {
-        self.vsize
-    }
-}
-
 pub trait CookieGetter: Send + Sync {
     fn get(&self) -> Result<Vec<u8>>;
 }
@@ -210,13 +182,16 @@ impl Connection {
         let mut in_header = true;
         let mut contents: Option<String> = None;
         let iter = self.rx.by_ref();
+
         let status = iter
             .next()
             .chain_err(|| {
                 ErrorKind::Connection("disconnected from daemon while receiving".to_owned())
             })?
             .chain_err(|| "failed to read status")?;
+
         let mut headers = HashMap::new();
+
         for line in iter {
             let line = line.chain_err(|| ErrorKind::Connection("failed to read".to_owned()))?;
             if line.is_empty() {
@@ -236,9 +211,11 @@ impl Connection {
 
         let contents =
             contents.chain_err(|| ErrorKind::Connection("no reply from daemon".to_owned()))?;
+
         let contents_length: &str = headers
             .get("Content-Length")
             .chain_err(|| format!("Content-Length is missing: {:?}", headers))?;
+
         let contents_length: usize = contents_length
             .parse()
             .chain_err(|| format!("invalid Content-Length: {:?}", contents_length))?;
@@ -290,10 +267,6 @@ pub struct Daemon {
     message_id: Counter, // for monotonic JSONRPC 'id'
     signal: Waiter,
     blocktxids_cache: Arc<BlockTxIDsCache>,
-
-    // monitoring
-    latency: HistogramVec,
-    size: HistogramVec,
 }
 
 impl Daemon {
@@ -304,8 +277,8 @@ impl Daemon {
         network: Network,
         signal: Waiter,
         blocktxids_cache: Arc<BlockTxIDsCache>,
-        metrics: &Metrics,
     ) -> Result<Daemon> {
+
         let daemon = Daemon {
             daemon_dir: daemon_dir.clone(),
             network,
@@ -317,16 +290,8 @@ impl Daemon {
             message_id: Counter::new(),
             blocktxids_cache: blocktxids_cache,
             signal: signal.clone(),
-            latency: metrics.histogram_vec(
-                HistogramOpts::new("electrs_daemon_rpc", "Bitcoind RPC latency (in seconds)"),
-                &["method"],
-            ),
-            // TODO: use better buckets (e.g. 1 byte to 10MB).
-            size: metrics.histogram_vec(
-                HistogramOpts::new("electrs_daemon_bytes", "Bitcoind RPC size (in bytes)"),
-                &["method", "dir"],
-            ),
         };
+
         let network_info = daemon.getnetworkinfo()?;
         info!("{:?}", network_info);
         if network_info.version < 16_00_00 {
@@ -335,17 +300,19 @@ impl Daemon {
                 network_info.subversion,
             )
         }
+
         let blockchain_info = daemon.getblockchaininfo()?;
         info!("{:?}", blockchain_info);
         if blockchain_info.pruned {
             bail!("pruned node is not supported (use '-prune=0' bitcoind flag)".to_owned())
         }
+
         loop {
             if !daemon.getblockchaininfo()?.initialblockdownload {
                 break;
             }
             warn!("wait until bitcoind is synced (i.e. initialblockdownload = false)");
-            signal.wait(Duration::from_secs(3))?;
+            signal.wait(Duration::from_secs(10))?;
         }
         Ok(daemon)
     }
@@ -358,8 +325,6 @@ impl Daemon {
             message_id: Counter::new(),
             signal: self.signal.clone(),
             blocktxids_cache: Arc::clone(&self.blocktxids_cache),
-            latency: self.latency.clone(),
-            size: self.size.clone(),
         })
     }
 
@@ -380,20 +345,12 @@ impl Daemon {
         self.network.magic()
     }
 
-    fn call_jsonrpc(&self, method: &str, request: &Value) -> Result<Value> {
+    fn call_jsonrpc(&self, request: &Value) -> Result<Value> {
         let mut conn = self.conn.lock().unwrap();
-        let timer = self.latency.with_label_values(&[method]).start_timer();
         let request = request.to_string();
         conn.send(&request)?;
-        self.size
-            .with_label_values(&[method, "send"])
-            .observe(request.len() as f64);
         let response = conn.recv()?;
         let result: Value = from_str(&response).chain_err(|| "invalid JSON")?;
-        timer.observe_duration();
-        self.size
-            .with_label_values(&[method, "recv"])
-            .observe(response.len() as f64);
         Ok(result)
     }
 
@@ -404,7 +361,7 @@ impl Daemon {
             .map(|params| json!({"method": method, "params": params, "id": id}))
             .collect();
         let mut results = vec![];
-        let mut replies = self.call_jsonrpc(method, &reqs)?;
+        let mut replies = self.call_jsonrpc(&reqs)?;
         if let Some(replies_vec) = replies.as_array_mut() {
             for reply in replies_vec {
                 results.push(parse_jsonrpc_reply(reply.take(), method, id)?)
@@ -564,32 +521,6 @@ impl Daemon {
             result.insert(parse_hash(&value).chain_err(|| "invalid txid")?);
         }
         Ok(result)
-    }
-
-    pub fn getmempoolentry(&self, txid: &Sha256dHash) -> Result<MempoolEntry> {
-        let entry = self.request("getmempoolentry", json!([txid.to_hex()]))?;
-        let fee = (entry
-            .get("fee")
-            .chain_err(|| "missing fee")?
-            .as_f64()
-            .chain_err(|| "non-float fee")?
-            * 100_000_000f64) as u64;
-        let vsize = entry
-            .get("size")
-            .or_else(|| entry.get("vsize")) // (https://github.com/bitcoin/bitcoin/pull/15637)
-            .chain_err(|| "missing vsize")?
-            .as_u64()
-            .chain_err(|| "non-integer vsize")? as u32;
-        Ok(MempoolEntry::new(fee, vsize))
-    }
-
-    pub fn broadcast(&self, tx: &Transaction) -> Result<Sha256dHash> {
-        let tx = hex::encode(serialize(tx));
-        let txid = self.request("sendrawtransaction", json!([tx]))?;
-        Ok(
-            Sha256dHash::from_hex(txid.as_str().chain_err(|| "non-string txid")?)
-                .chain_err(|| "failed to parse txid")?,
-        )
     }
 
     fn get_all_headers(&self, tip: &Sha256dHash) -> Result<Vec<BlockHeader>> {
