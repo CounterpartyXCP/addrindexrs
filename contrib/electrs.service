@@ -1,9 +1,9 @@
 [Unit]
-Description=Electrum Rust Server
+Description=addrindexrs rust server
 
 [Service]
 Type=simple
-ExecStart=/path/to/electrs/target/release/electrs -vvvv --db-dir /path/to/electrs/db/
+ExecStart=/path/to/addrindexrs/target/release/addrindexrs -vvvv --db-dir /path/to/addrindexrs/db/
 Restart=on-failure
 RestartSec=60
 Environment="RUST_BACKTRACE=1"

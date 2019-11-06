@@ -1,4 +1,4 @@
-extern crate electrs;
+extern crate addrindexrs;
 
 extern crate error_chain;
 #[macro_use]
@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 
-use electrs::{
+use addrindexrs::{
     app::App,
     bulk,
     cache::BlockTxIDsCache,
@@ -66,7 +66,7 @@ fn run_server(config: &Config) -> Result<()> {
     loop {
         app.update(&signal)?;
         query.update_mempool()?;
-        server.get_or_insert_with(|| RPC::start(config.electrum_rpc_addr, query.clone()));
+        server.get_or_insert_with(|| RPC::start(config.indexer_rpc_addr, query.clone()));
         if let Err(err) = signal.wait(Duration::from_secs(5)) {
             info!("stopping server: {}", err);
             break;

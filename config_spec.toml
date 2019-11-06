@@ -1,11 +1,10 @@
 [general]
-env_prefix = "ELECTRS"
+env_prefix = "ADDRINDEXRS"
 conf_file_param = "conf"
 conf_dir_param = "conf_dir"
 doc = """
-An efficient re-implementation of Electrum Server, inspired by ElectrumX, Electrum Personal Server and bitcoincore-indexd.
-
-The motivation behind this project is to enable a user to run his own Electrum server, with required hardware resources not much beyond those of a full node. The server indexes the entire Bitcoin blockchain, and the resulting index enables fast queries for any given user wallet, allowing the user to keep real-time track of his balances and his transaction history using the Electrum wallet. Since it runs on the user's own machine, there is no need for the wallet to communicate with external Electrum servers, thus preserving the privacy of the user's addresses and balances."""
+An efficient addresses indexer based on Electrs.
+"""
 
 [[switch]]
 name = "verbose"
@@ -42,9 +41,9 @@ doc = "Select Bitcoin network type ('mainnet', 'testnet' or 'regtest')"
 default = "Default::default()"
 
 [[param]]
-name = "electrum_rpc_addr"
+name = "indexer_rpc_addr"
 type = "crate::config::ResolvAddr"
-doc = "Electrum server JSONRPC 'addr:port' to listen on (default: '127.0.0.1:50001' for mainnet, '127.0.0.1:60001' for testnet and '127.0.0.1:60401' for regtest)"
+doc = "Indexer JSONRPC 'addr:port' to listen on (default: '127.0.0.1:50001' for mainnet, '127.0.0.1:60001' for testnet and '127.0.0.1:60401' for regtest)"
 
 [[param]]
 name = "daemon_rpc_addr"
