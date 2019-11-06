@@ -54,6 +54,7 @@ impl Status {
             txns.push(s.txid);
         }
         txns.sort_unstable();
+        txns.dedup();
         txns
     }
 }
