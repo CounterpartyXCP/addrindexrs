@@ -212,6 +212,8 @@ pub fn full_compaction(store: DBStore) -> DBStore {
     store.flush();
     let store = store.compact().enable_compaction();
     store.write(vec![full_compaction_marker()]);
+    // Make sure full compaction marker isn't left behind
+    store.flush();
     store
 }
 
