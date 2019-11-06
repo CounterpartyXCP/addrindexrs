@@ -9,6 +9,7 @@ use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 
+
 use electrs::{
     app::App,
     bulk,
@@ -35,20 +36,25 @@ fn run_server(config: &Config) -> Result<()> {
         signal.clone(),
         blocktxids_cache,
     )?;
+
     // Perform initial indexing from local blk*.dat block files.
     let store = DBStore::open(&config.db_path, /*low_memory=*/ config.jsonrpc_import);
     let index = Index::load(&store, &daemon, config.index_batch_size)?;
+
     let store = if is_fully_compacted(&store) {
-        store // initial import and full compaction are over
+         // initial import and full compaction are over
+        store
     } else if config.jsonrpc_import {
-        index.update(&store, &signal)?; // slower: uses JSONRPC for fetching blocks
+         // slower: uses JSONRPC for fetching blocks
+        index.update(&store, &signal)?;
         full_compaction(store)
     } else {
         // faster, but uses more memory
         let store =
             bulk::index_blk_files(&daemon, config.bulk_index_threads, &signal, store)?;
         let store = full_compaction(store);
-        index.reload(&store); // make sure the block header index is up-to-date
+         // make sure the block header index is up-to-date
+        index.reload(&store);
         store
     }
     .enable_compaction(); // enable auto compactions before starting incremental index updates.
@@ -56,7 +62,7 @@ fn run_server(config: &Config) -> Result<()> {
     let app = App::new(store, index, daemon)?;
     let query = Query::new(app.clone(), config.txid_limit);
 
-    let mut server = None; // Electrum RPC server
+    let mut server = None; // Indexer RPC server
     loop {
         app.update(&signal)?;
         query.update_mempool()?;
