@@ -21,7 +21,8 @@ $ cargo build --release
 
 ## Bitcoind configuration
 
-Allow Bitcoin daemon to sync before starting the indexer:
+Allow Bitcoin daemon to sync before starting the indexer. The indexer requires that bitcoin daemon isn't pruned and maintains a txindex.
+
 ```bash
 $ bitcoind -server=1 -txindex=1 -prune=0
 ```
