@@ -1,6 +1,7 @@
 # Indexer
 
 * Snapshot DB after successful indexing - and run queries on the latest snapshot
+* Improve management of reorgs (remove rows related to txs of reorg'd blocks from db)
 
 # Rust
 

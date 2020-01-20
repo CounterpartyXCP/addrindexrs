@@ -2,6 +2,7 @@ use bitcoin_hashes::hex::{FromHex, ToHex};
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
 use error_chain::ChainedError;
 use serde_json::{from_str, Value};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::SyncSender;
@@ -219,30 +220,50 @@ impl RPC {
     pub fn start(addr: SocketAddr, query: Arc<Query>) -> RPC {
         RPC {
             server: Some(spawn_thread("rpc", move || {
-                let senders = Arc::new(Mutex::new(Vec::<SyncSender<Message>>::new()));
+                let senders = Arc::new(Mutex::new(HashMap::<i32, SyncSender<Message>>::new()));
+                let handles = Arc::new(Mutex::new(
+                    HashMap::<i32, std::thread::JoinHandle<()>>::new(),
+                ));
+
                 let acceptor = RPC::start_acceptor(addr);
-                let mut children = vec![];
+                let mut handle_count = 0;
 
                 while let Some((stream, addr)) = acceptor.receiver().recv().unwrap() {
-                    let query = query.clone();
-                    let senders = senders.clone();
-                    children.push(spawn_thread("peer", move || {
-                        info!("[{}] connected peer", addr);
-                        let conn = Connection::new(query, stream, addr);
-                        senders.lock().unwrap().push(conn.chan.sender());
-                        conn.run();
-                        info!("[{}] disconnected peer", addr);
-                    }));
+                    let handle_id = handle_count;
+                    handle_count += 1;
+                    // explicitely scope the shadowed variables for the new thread
+                    let handle: thread::JoinHandle<()> = {
+                        let query = Arc::clone(&query);
+                        let senders = Arc::clone(&senders);
+                        let handles = Arc::clone(&handles);
+
+                        spawn_thread("peer", move || {
+                            info!("[{}] connected peer #{}", addr, handle_id);
+                            let conn = Connection::new(query, stream, addr);
+                            senders
+                                .lock()
+                                .unwrap()
+                                .insert(handle_id, conn.chan.sender());
+                            conn.run();
+                            info!("[{}] disconnected peer #{}", addr, handle_id);
+                            senders.lock().unwrap().remove(&handle_id);
+                            handles.lock().unwrap().remove(&handle_id);
+                        })
+                    };
+
+                    handles.lock().unwrap().insert(handle_id, handle);
                 }
 
                 trace!("closing {} RPC connections", senders.lock().unwrap().len());
-                for sender in senders.lock().unwrap().iter() {
+                for sender in senders.lock().unwrap().values() {
                     let _ = sender.send(Message::Done);
                 }
 
-                trace!("waiting for {} RPC handling threads", children.len());
-                for child in children {
-                    let _ = child.join();
+                trace!("waiting for {} RPC handling threads", handles.lock().unwrap().len());
+                for (_, handle) in handles.lock().unwrap().drain() {
+                    if let Err(e) = handle.join() {
+                        warn!("failed to join thread: {:?}", e);
+                    }
                 }
 
                 trace!("RPC connections are closed");
