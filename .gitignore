@@ -6,3 +6,4 @@ _*/
 *~
 *.pyc
 Dockerfile
+.vscode/settings.json
