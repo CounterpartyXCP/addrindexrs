@@ -393,6 +393,7 @@ impl Index {
 
             let rows_iter = batch.iter().flat_map(|block| {
                 let blockhash = block.bitcoin_hash();
+                info!("indexing block {}", blockhash);
                 index_block(block).chain(std::iter::once(last_indexed_block(&blockhash)))
             });
 
