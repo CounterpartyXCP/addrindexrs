@@ -1,6 +1,6 @@
 [package]
 name = "addrindexrs"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Roman Zeyde <me@romanzey.de>", "kenshin-samourai <kenshin_samourai@tutanota.com>"]
 description = "An efficient address indexer in Rust"
 license = "MIT"
