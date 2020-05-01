@@ -1,6 +1,32 @@
 # addrindexrs
 
-## 0.1.0 (TBD)
+
+## Releases ##
+
+- [v0.2.0](#0_2_0)
+- [v0.1.0](#0_1_0)
+
+
+<a name="0_2_0"/>
+
+## addrindexrs v0.2.0 ##
+
+### Change log ###
+
+- [#6](https://github.com/Samourai-Wallet/addrindexrs/pull/6) store the compaction marker before the full compaction
+- [#7](https://github.com/Samourai-Wallet/addrindexrs/pull/7) add trace for indexed block
+
+
+#### Credits ###
+
+- kenshin-samourai
+
+
+<a name="0_1_0"/>
+
+## addrindexrs v0.1.0 ##
+
+Initial release
 
 
 # Prior releases (electrs)
