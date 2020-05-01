@@ -209,11 +209,9 @@ fn full_compaction_marker() -> Row {
 }
 
 pub fn full_compaction(store: DBStore) -> DBStore {
+    store.write(vec![full_compaction_marker()]);
     store.flush();
     let store = store.compact().enable_compaction();
-    store.write(vec![full_compaction_marker()]);
-    // Make sure full compaction marker isn't left behind
-    store.flush();
     store
 }
 
