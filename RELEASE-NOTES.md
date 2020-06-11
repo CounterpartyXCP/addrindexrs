@@ -3,8 +3,23 @@
 
 ## Releases ##
 
+- [v0.3.0](#0_3_0)
 - [v0.2.0](#0_2_0)
 - [v0.1.0](#0_1_0)
+
+
+<a name="0_3_0"/>
+
+## addrindexrs v0.3.0 ##
+
+### Change log ###
+
+- [#9](https://github.com/Samourai-Wallet/addrindexrs/pull/9) srewrite wriestore::flush()
+
+
+#### Credits ###
+
+- kenshin-samourai
 
 
 <a name="0_2_0"/>
