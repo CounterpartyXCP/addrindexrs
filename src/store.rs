@@ -181,11 +181,7 @@ impl WriteStore for DBStore {
     }
 
     fn flush(&self) {
-        let mut opts = rocksdb::WriteOptions::new();
-        opts.set_sync(true);
-        opts.disable_wal(false);
-        let empty = rocksdb::WriteBatch::default();
-        self.db.write_opt(empty, &opts).unwrap();
+        self.db.flush().unwrap();
     }
 }
 
