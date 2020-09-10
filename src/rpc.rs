@@ -72,9 +72,31 @@ impl Connection {
         )))
     }
 
+    fn blockchain_scripthash_get_utxos(&self, params: &[Value]) -> Result<Value> {
+        let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
+        let status = self.query.status(&script_hash[..])?;
+
+        let mut dict = HashMap::new();
+        for item in status.funding().into_iter() {
+            dict.insert(item.txid.to_hex() + ":" + &item.vout.to_string(), "");
+        }
+
+        for item in status.spending().into_iter() {
+            dict.remove( &(item.outpoint.0.to_hex() + ":" + &item.outpoint.1.to_string()) );
+        }
+
+        let mut utxos = vec![];
+        for (outpoint, _drop) in &dict {
+            utxos.push(outpoint)
+        }
+
+        Ok(json!(utxos))
+    }
+
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
         let result = match method {
             "blockchain.scripthash.get_history" => self.blockchain_scripthash_get_history(&params),
+            "blockchain.scripthash.get_utxos" => self.blockchain_scripthash_get_utxos(&params),
             "server.ping" => Ok(Value::Null),
             "server.version" => self.server_version(),
             &_ => bail!("unknown method {} {:?}", method, params),

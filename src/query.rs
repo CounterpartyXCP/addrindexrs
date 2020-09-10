@@ -20,11 +20,11 @@ pub struct Txo {
 //
 // Input of a Transaction
 //
-type OutPoint = (Sha256dHash, usize); // (txid, vout)
+pub type OutPoint = (Sha256dHash, usize); // (txid, vout)
 
-struct SpendingInput {
-    txid: Sha256dHash,
-    outpoint: OutPoint,
+pub struct SpendingInput {
+    pub txid: Sha256dHash,
+    pub outpoint: OutPoint,
 }
 
 //
@@ -37,11 +37,11 @@ pub struct Status {
 }
 
 impl Status {
-    fn funding(&self) -> impl Iterator<Item = &Txo> {
+    pub fn funding(&self) -> impl Iterator<Item = &Txo> {
         self.confirmed.0.iter().chain(self.mempool.0.iter())
     }
 
-    fn spending(&self) -> impl Iterator<Item = &SpendingInput> {
+    pub fn spending(&self) -> impl Iterator<Item = &SpendingInput> {
         self.confirmed.1.iter().chain(self.mempool.1.iter())
     }
 
