@@ -1,3 +1,4 @@
+use bitcoin::consensus::encode::serialize;
 use bitcoin_hashes::hex::{FromHex, ToHex};
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
 use error_chain::ChainedError;
@@ -60,6 +61,19 @@ impl Connection {
         ]))
     }
 
+    fn blockchain_headers_subscribe(&mut self) -> Result<Value> {
+        let entry = self.query.get_best_header()?;
+        let hex_header = hex::encode(serialize(entry.header()));
+        let result = json!({"hex": hex_header, "height": entry.height()});
+        Ok(result)
+    }
+
+    fn blockchain_scripthash_get_balance(&self, _params: &[Value]) -> Result<Value> {
+        Ok(
+            json!({ "confirmed": null, "unconfirmed": null }),
+        )
+    }
+
     fn blockchain_scripthash_get_history(&self, params: &[Value]) -> Result<Value> {
         let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
         let status = self.query.status(&script_hash[..])?;
@@ -74,6 +88,8 @@ impl Connection {
 
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
         let result = match method {
+            "blockchain.headers.subscribe" => self.blockchain_headers_subscribe(),
+            "blockchain.scripthash.get_balance" => self.blockchain_scripthash_get_balance(&params),
             "blockchain.scripthash.get_history" => self.blockchain_scripthash_get_history(&params),
             "server.ping" => Ok(Value::Null),
             "server.version" => self.server_version(),
