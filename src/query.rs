@@ -7,7 +7,7 @@ use crate::errors::*;
 use crate::index::{TxInRow, TxOutRow, TxRow};
 use crate::mempool::Tracker;
 use crate::store::ReadStore;
-use crate::util::HashPrefix;
+use crate::util::{HashPrefix, HeaderEntry};
 
 //
 // Output of a Transaction
@@ -244,6 +244,11 @@ impl Query {
             .chain_err(|| "failed to get mempool status")?;
 
         Ok(Status { confirmed, mempool })
+    }
+
+    pub fn get_best_header(&self) -> Result<HeaderEntry> {
+        let last_header = self.app.index().best_header();
+        Ok(last_header.chain_err(|| "no headers indexed")?)
     }
 
     pub fn update_mempool(&self) -> Result<()> {
