@@ -11,3 +11,4 @@ WORKDIR /home/user
 COPY ./ /home/user
 
 RUN cargo check
+RUN cargo build --release
