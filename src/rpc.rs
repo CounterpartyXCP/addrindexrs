@@ -86,6 +86,12 @@ impl Connection {
         )))
     }
 
+    fn blockchain_scripthash_get_oldest_tx(&self, params: &[Value]) -> Result<Value> {
+        let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
+        let oldest_tx = self.query.oldest_tx(&script_hash[..])?;
+        Ok(json!({"tx_hash":oldest_tx.txid.to_hex(),"block_index":oldest_tx.blockindex}))
+    }
+
     fn blockchain_scripthash_get_utxos(&self, params: &[Value]) -> Result<Value> {
         let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
         let status = self.query.status(&script_hash[..])?;
@@ -112,6 +118,7 @@ impl Connection {
             "blockchain.headers.subscribe" => self.blockchain_headers_subscribe(),
             "blockchain.scripthash.get_balance" => self.blockchain_scripthash_get_balance(&params),
             "blockchain.scripthash.get_history" => self.blockchain_scripthash_get_history(&params),
+            "blockchain.scripthash.get_oldest_tx" => self.blockchain_scripthash_get_oldest_tx(&params),
             "blockchain.scripthash.get_utxos" => self.blockchain_scripthash_get_utxos(&params),
             "server.ping" => Ok(Value::Null),
             "server.version" => self.server_version(),
