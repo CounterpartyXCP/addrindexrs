@@ -157,7 +157,7 @@ impl Query {
             .collect()
     }
 
-    fn get_txids_by_prefix(
+    /*fn get_txids_by_prefix(
         &self,
         store: &dyn ReadStore,
         prefixes: Vec<HashPrefix>,
@@ -170,7 +170,7 @@ impl Query {
             }
         }
         Ok(txns)
-    }
+    }*/
 
     fn get_txrows_by_prefixes(
         &self,
@@ -199,10 +199,15 @@ impl Query {
         let txrows = self.get_txrows_by_prefixes(store, prefixes)?;
 
         for txrow in &txrows {
+            let block_index = match self.get_block_index(deserialize(&txrow.block_hash).unwrap()){
+                Ok(header) => header.height(),
+                Err(_error) => 0
+            };
+    
             spendings.push(SpendingInput {
                 txid: deserialize(&txrow.key.txid).unwrap(),
                 outpoint: (txo.txid, txo.vout),
-                blockindex: self.get_block_index(deserialize(&txrow.block_hash).unwrap()).unwrap().height()
+                blockindex: block_index
             })
         }
 
@@ -229,10 +234,15 @@ impl Query {
             let txrows = self.get_txrows_by_prefixes(store, vec![row.txid_prefix])?;
             
             for txrow in &txrows {
+                let block_index = match self.get_block_index(deserialize(&txrow.block_hash).unwrap()){
+                    Ok(header) => header.height(),
+                    Err(_error) => 0
+                };
+                    
                 result.push(Txo {
                     txid: deserialize(&txrow.key.txid).unwrap(),
                     vout: row.vout as usize,
-                    blockindex: self.get_block_index(deserialize(&txrow.block_hash).unwrap()).unwrap().height()
+                    blockindex: block_index
                 })
             }
         }
