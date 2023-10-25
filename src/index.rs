@@ -137,15 +137,17 @@ pub struct TxKey {
 #[derive(Serialize, Deserialize)]
 pub struct TxRow {
     pub key: TxKey,
+    pub block_hash: FullHash
 }
 
 impl TxRow {
-    pub fn new(txid: &Sha256dHash) -> TxRow {
+    pub fn new(txid: &Sha256dHash, blockhash: &Sha256dHash) -> TxRow {
         TxRow {
             key: TxKey {
                 code: b'T',
-                txid: full_hash(&txid[..]),
+                txid: full_hash(&txid[..]),             
             },
+            block_hash: full_hash(&blockhash)
         }
     }
 
@@ -159,13 +161,16 @@ impl TxRow {
 
     pub fn to_row(&self) -> Row {
         Row {
-            key: bincode::serialize(&self).unwrap(),
-            value: vec![],
+            key: bincode::serialize(&self.key).unwrap(),
+            value: bincode::serialize(&self.block_hash).unwrap(),
         }
     }
 
     pub fn from_row(row: &Row) -> TxRow {
-        bincode::deserialize(&row.key).expect("failed to parse TxRow")
+        TxRow {
+            key:bincode::deserialize(&row.key).expect("failed to parse TxRow"),
+            block_hash:bincode::deserialize(&row.value).expect("failed to parse TxRow")
+        }
     }
 }
 
@@ -192,7 +197,7 @@ pub fn compute_script_hash(data: &[u8]) -> FullHash {
 //
 // Index a transaction
 //
-pub fn index_transaction<'a>(txn: &'a Transaction) -> impl 'a + Iterator<Item = Row> {
+pub fn index_transaction<'a>(txn: &'a Transaction, blockhash: &Sha256dHash) -> impl 'a + Iterator<Item = Row> {
     let null_hash = Sha256dHash::default();
     let txid: Sha256dHash = txn.txid();
 
@@ -212,7 +217,7 @@ pub fn index_transaction<'a>(txn: &'a Transaction) -> impl 'a + Iterator<Item = 
 
     inputs
         .chain(outputs)
-        .chain(std::iter::once(TxRow::new(&txid).to_row()))
+        .chain(std::iter::once(TxRow::new(&txid, &blockhash).to_row()))
 }
 
 //
@@ -232,7 +237,7 @@ pub fn index_block<'a>(block: &'a Block) -> impl 'a + Iterator<Item = Row> {
     block
         .txdata
         .iter()
-        .flat_map(move |txn| index_transaction(&txn))
+        .flat_map(move |txn| index_transaction(&txn, &blockhash))
         .chain(std::iter::once(row))
 }
 
@@ -352,6 +357,14 @@ impl Index {
             .read()
             .unwrap()
             .header_by_height(height)
+            .cloned()
+    }
+
+    pub fn get_header_by_block_hash(&self, block_hash: Sha256dHash) -> Option<HeaderEntry> {
+        self.headers
+            .read()
+            .unwrap()
+            .header_by_blockhash(&block_hash)
             .cloned()
     }
 

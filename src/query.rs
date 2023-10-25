@@ -15,6 +15,7 @@ use crate::util::{HashPrefix, HeaderEntry};
 pub struct Txo {
     pub txid: Sha256dHash,
     pub vout: usize,
+    pub blockindex: usize
 }
 
 //
@@ -25,6 +26,13 @@ pub type OutPoint = (Sha256dHash, usize); // (txid, vout)
 pub struct SpendingInput {
     pub txid: Sha256dHash,
     pub outpoint: OutPoint,
+    pub blockindex: usize
+}
+
+
+pub struct TxBlockIndex {
+    pub txid: Sha256dHash,
+    pub blockindex: usize
 }
 
 //
@@ -56,6 +64,38 @@ impl Status {
         txns.sort_unstable();
         txns.dedup();
         txns
+    }
+    
+    pub fn oldest(&self) -> Option<TxBlockIndex> {
+        let mut min_found = false;
+        let mut min_block_index = 0;
+        let mut min_tx : Option<TxBlockIndex> = None;
+            
+        for f in self.funding() {
+            if !min_found || (min_block_index == 0 && f.blockindex > 0) || f.blockindex < min_block_index {
+                min_block_index = f.blockindex;
+                min_tx = Some(TxBlockIndex{
+                        txid: f.txid,
+                        blockindex: f.blockindex
+                    }
+                );
+                min_found = true;
+            }
+        }
+    
+        for f in self.spending() {
+            if !min_found || (min_block_index == 0 && f.blockindex > 0) || f.blockindex < min_block_index {
+                min_block_index = f.blockindex;
+                min_tx = Some(TxBlockIndex{
+                        txid: f.txid,
+                        blockindex: f.blockindex
+                    }
+                );
+                min_found = true;
+            }
+        }
+        
+        min_tx
     }
 }
 
@@ -117,7 +157,7 @@ impl Query {
             .collect()
     }
 
-    fn get_txids_by_prefix(
+    /*fn get_txids_by_prefix(
         &self,
         store: &dyn ReadStore,
         prefixes: Vec<HashPrefix>,
@@ -130,7 +170,22 @@ impl Query {
             }
         }
         Ok(txns)
+    }*/
+
+    fn get_txrows_by_prefixes(
+        &self,
+        store: &dyn ReadStore,
+        prefixes: Vec<HashPrefix>,
+    ) -> Result<Vec<TxRow>> {
+        let mut txns = vec![];
+        for prefix in prefixes {
+            for tx_row in self.get_txrows_by_prefix(store, prefix) {
+                txns.push(tx_row)
+            }
+        }
+        Ok(txns)
     }
+
 
     fn find_spending_input(
         &self,
@@ -140,12 +195,19 @@ impl Query {
 
         let mut spendings = vec![];
         let prefixes = self.get_prefixes_by_funding_txo(store, &txo.txid, txo.vout);
-        let txids = self.get_txids_by_prefix(store, prefixes)?;
+        //let txids = self.get_txids_by_prefix(store, prefixes)?;
+        let txrows = self.get_txrows_by_prefixes(store, prefixes)?;
 
-        for txid in &txids {
+        for txrow in &txrows {
+            let block_index = match self.get_block_index(deserialize(&txrow.block_hash).unwrap()){
+                Ok(header) => header.height(),
+                Err(_error) => 0
+            };
+    
             spendings.push(SpendingInput {
-                txid: *txid,
+                txid: deserialize(&txrow.key.txid).unwrap(),
                 outpoint: (txo.txid, txo.vout),
+                blockindex: block_index
             })
         }
 
@@ -168,11 +230,19 @@ impl Query {
         let mut result = vec![];
 
         for row in &txout_rows {
-            let txids = self.get_txids_by_prefix(store, vec![row.txid_prefix])?;
-            for txid in &txids {
+            //let txids = self.get_txids_by_prefix(store, vec![row.txid_prefix])?;
+            let txrows = self.get_txrows_by_prefixes(store, vec![row.txid_prefix])?;
+            
+            for txrow in &txrows {
+                let block_index = match self.get_block_index(deserialize(&txrow.block_hash).unwrap()){
+                    Ok(header) => header.height(),
+                    Err(_error) => 0
+                };
+                    
                 result.push(Txo {
-                    txid: *txid,
+                    txid: deserialize(&txrow.key.txid).unwrap(),
                     vout: row.vout as usize,
+                    blockindex: block_index
                 })
             }
         }
@@ -245,10 +315,21 @@ impl Query {
 
         Ok(Status { confirmed, mempool })
     }
-
+    
+    pub fn oldest_tx(&self, script_hash: &[u8]) -> Result<TxBlockIndex> {
+        let all_status = self.status(script_hash).unwrap();
+        
+        all_status.oldest().chain_err(|| "no txs for address")
+    }
+    
     pub fn get_best_header(&self) -> Result<HeaderEntry> {
         let last_header = self.app.index().best_header();
         Ok(last_header.chain_err(|| "no headers indexed")?)
+    }
+    
+    pub fn get_block_index(&self, block_hash:Sha256dHash) -> Result<HeaderEntry> {
+        let block_header = self.app.index().get_header_by_block_hash(block_hash);
+        Ok(block_header.chain_err(|| "no headers indexed")?)
     }
 
     pub fn update_mempool(&self) -> Result<()> {

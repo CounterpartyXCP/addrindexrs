@@ -11,7 +11,6 @@ use crate::index::index_transaction;
 use crate::store::{ReadStore, Row};
 use crate::util::Bytes;
 
-
 //
 // BTree emulating a db store
 // for mempool transactions
@@ -28,7 +27,7 @@ impl MempoolStore {
     }
 
     fn add(&mut self, tx: &Transaction) {
-        let rows = index_transaction(tx);
+        let rows = index_transaction(tx, &Sha256dHash::default());
         for row in rows {
             let (key, value) = row.into_pair();
             self.map.entry(key).or_insert_with(|| vec![]).push(value);
@@ -36,7 +35,7 @@ impl MempoolStore {
     }
 
     fn remove(&mut self, tx: &Transaction) {
-        let rows = index_transaction(tx);
+        let rows = index_transaction(tx, &Sha256dHash::default());
         for row in rows {
             let (key, value) = row.into_pair();
             let no_values_left = {
