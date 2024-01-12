@@ -1,4 +1,4 @@
-FROM rust:1.60.0
+FROM rust:1.75.0
 
 RUN apt-get update
 RUN apt-get install -y clang cmake
