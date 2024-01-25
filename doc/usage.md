@@ -73,6 +73,20 @@ $ du db/
 38G db/mainnet/
 ```
 
+### Example of use with docker
+
+Assuming `bitcoind` is listening on 127.0.0.1:10312 with "USER:PASS" as rpc credentials:
+
+```
+$ docker build -t addrindexrs .
+$ docker run --rm -d \
+    --name indexer \
+    --network="host" \
+    addrindexrs \
+    -vvv --daemon-rpc-addr="127.0.0.1:10312" \
+    --cookie="USER:PASS"
+```
+
 ## Configuration files and environment variables
 
 The config files must be in the Toml format. These config files are (from lowest priority to highest): `/etc/addrindexrs/config.toml`, `~/.addrindexrs/config.toml`, `./addrindexrs.toml`.
