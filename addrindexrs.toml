@@ -7,6 +7,7 @@ txid-limit = 15000
 daemon-rpc-addr = "127.0.0.1:8332"
 cookie = "bitcoinrpc:rpc"
 jsonrpc-import = 1
+daemon-dir="/bitcoin/.bitcoin"
 
 verbose = 3
 rust-backtrace = "full"
