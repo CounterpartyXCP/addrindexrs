@@ -1,0 +1,12 @@
+[general]
+addrindexrs-network = bitcoin
+
+addrindexrs-indexr-rpc = 0.0.0.0:8432
+addrindexrs-txid-limit = 15000
+
+jsonrpc-import = 1
+addrindexrs-daemon-rpc = bitcoind:8332
+addrindexrs-cookie = bitcoinrpc:rpc
+
+verbose = 3
+rust-backtrace = full
