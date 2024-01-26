@@ -34,7 +34,7 @@ Otherwise, [`~/.bitcoin/.cookie`](https://github.com/bitcoin/bitcoin/blob/021218
 
 First index sync should take ~1.5 hours (on a dual core Intel CPU @ 3.3 GHz, 8 GB RAM, 1TB WD Blue HDD):
 ```bash
-$ cargo run --release -- -vvv --timestamp --db-dir ./db --indexer-rpc-addr="127.0.0.1:50001"
+$ cargo run --release -- -vvv --timestamp --db-dir ./db --indexer-rpc-addr="127.0.0.1:8432"
 2018-08-17T18:27:42 - INFO - NetworkInfo { version: 179900, subversion: "/Satoshi:0.17.99/" }
 2018-08-17T18:27:42 - INFO - BlockchainInfo { chain: "main", blocks: 537204, headers: 537204, bestblockhash: "0000000000000000002956768ca9421a8ddf4e53b1d81e429bd0125a383e3636", pruned: false, initialblockdownload: false }
 2018-08-17T18:27:42 - DEBUG - opening DB at "./db/mainnet"
@@ -55,7 +55,7 @@ $ cargo run --release -- -vvv --timestamp --db-dir ./db --indexer-rpc-addr="127.
 2018-08-17T19:58:27 - DEBUG - downloading new block headers (537205 already indexed) from 000000000000000000150d26fcc38b8c3b71ae074028d1d50949ef5aa429da00
 2018-08-17T19:58:27 - INFO - best=000000000000000000150d26fcc38b8c3b71ae074028d1d50949ef5aa429da00 height=537218 @ 2018-08-17T16:57:50Z (14 left to index)
 2018-08-17T19:58:28 - DEBUG - applying 14 new headers from height 537205
-2018-08-17T19:58:29 - INFO - RPC server running on 127.0.0.1:50001
+2018-08-17T19:58:29 - INFO - RPC server running on 127.0.0.1:8432
 ```
 You can specify options via command-line parameters, environment variables or using config files. See the documentation below.
 
@@ -64,7 +64,7 @@ Note that the final DB size should be ~20% of the `blk*.dat` files, but it may i
 If initial sync fails due to `memory allocation of xxxxxxxx bytes failedAborted` errors, as may happen on devices with limited RAM, try the following arguments when starting `addrindexrs`. It should take roughly 18 hours to sync and compact the index on an ODROID-HC1 with 8 CPU cores @ 2GHz, 2GB RAM, and an SSD using the following command:
 
 ```bash
-$ cargo run --release -- -vvvv --index-batch-size=10 --jsonrpc-import --db-dir ./db --indexer-rpc-addr="127.0.0.1:50001"
+$ cargo run --release -- -vvvv --index-batch-size=10 --jsonrpc-import --db-dir ./db --indexer-rpc-addr="127.0.0.1:8432"
 ```
 
 The index database is stored here:
@@ -75,7 +75,7 @@ $ du db/
 
 ### Example of use with docker
 
-Assuming `bitcoind` is listening on 127.0.0.1:10312 with "USER:PASS" as rpc credentials:
+Assuming `bitcoind` is listening on 127.0.0.1:8332 with "bitcoinrpc:rpc" as rpc credentials:
 
 ```
 $ docker build -t addrindexrs .
@@ -83,8 +83,8 @@ $ docker run --rm -d \
     --name indexer \
     --network="host" \
     addrindexrs \
-    -vvv --daemon-rpc-addr="127.0.0.1:10312" \
-    --cookie="USER:PASS"
+    -vvv --daemon-rpc-addr="127.0.0.1:8332" \
+    --cookie="bitcoinrpc:rpc"
 ```
 
 ## Configuration files and environment variables
@@ -105,11 +105,11 @@ In order to use a secure connection, you can also use [NGINX as an SSL endpoint]
 ```nginx
 stream {
         upstream addrindexrs {
-                server 127.0.0.1:50001;
+                server 127.0.0.1:8432;
         }
 
         server {
-                listen 50002 ssl;
+                listen 8433 ssl;
                 proxy_pass addrindexrs;
 
                 ssl_certificate /path/to/example.crt;
@@ -147,7 +147,7 @@ Add the following config to `/etc/tor/torrc`:
 ```
 HiddenServiceDir /var/lib/tor/hidden_service/
 HiddenServiceVersion 3
-HiddenServicePort 50001 127.0.0.1:50001
+HiddenServicePort 8432 127.0.0.1:8432
 ```
 
 Restart the service:
@@ -174,7 +174,7 @@ After=bitcoind.service
 
 [Service]
 WorkingDirectory=/home/bitcoin/addrindexrs
-ExecStart=/home/bitcoin/addrindexrs/target/release/addrindexrs --db-dir ./db --indexer-rpc-addr="127.0.0.1:50001"
+ExecStart=/home/bitcoin/addrindexrs/target/release/addrindexrs --db-dir ./db --indexer-rpc-addr="127.0.0.1:8432"
 User=bitcoin
 Group=bitcoin
 Type=simple
