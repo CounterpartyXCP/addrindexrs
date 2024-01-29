@@ -9,6 +9,7 @@ WORKDIR /home/user
 
 COPY . .
 RUN cargo build --release
+RUN mv target/release/addrindexrs /bin/addrindexrs
 
-ENTRYPOINT [ "cargo", "run", "--release", "--" ]
+ENTRYPOINT [ "/bin/addrindexrs", "--" ]
 CMD [ "-vvv" ]
