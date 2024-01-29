@@ -15,7 +15,7 @@ COPY . .
 RUN cargo build --release
 RUN mv /home/user/target/release/addrindexrs /usr/local/bin/
 
-ENTRYPOINT [ "addrindexrs", "--" ]
+ENTRYPOINT [ "addrindexrs" ]
 
 # Default command
 CMD [ "-vvv" ]
