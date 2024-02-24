@@ -172,7 +172,7 @@ impl WriteStore for DBStore {
     fn write<I: IntoIterator<Item = Row>>(&self, rows: I) {
         let mut batch = rocksdb::WriteBatch::default();
         for row in rows {
-            batch.put(row.key.as_slice(), row.value.as_slice()).unwrap();
+            batch.put(row.key.as_slice(), row.value.as_slice());
         }
         let mut opts = rocksdb::WriteOptions::new();
         opts.set_sync(!self.opts.bulk_import);
