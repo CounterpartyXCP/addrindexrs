@@ -126,7 +126,7 @@ impl<'a> Iterator for ScanIterator<'a> {
         if self.done {
             return None;
         }
-        let (key, value) = self.iter.next()?;
+        let Ok((key, value)) = self.iter.next()? else { return None };
         if !key.starts_with(&self.prefix) {
             self.done = true;
             return None;
@@ -152,7 +152,7 @@ impl ReadStore for DBStore {
         for (key, value) in self.db.iterator(rocksdb::IteratorMode::From(
             prefix,
             rocksdb::Direction::Forward,
-        )) {
+        )).filter_map(Result::ok) {
             if !key.starts_with(prefix) {
                 break;
             }
