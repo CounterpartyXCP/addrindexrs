@@ -5,8 +5,7 @@ use std::convert::TryInto;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
-use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -19,7 +18,6 @@ use crate::errors::*;
 // Default IP address of the RPC server
 //
 const DEFAULT_SERVER_ADDRESS: [u8; 4] = [127, 0, 0, 1]; // by default, serve on IPv4 localhost
-
 
 mod internal {
     #![allow(unused)]
@@ -53,47 +51,6 @@ impl fmt::Display for AddressError {
             }
             AddressError::NoAddrError(addr) => write!(f, "No address found for {}", addr),
         }
-    }
-}
-
-// Newtype for an address that is parsed as `String`
-//
-// The main point of this newtype is to provide better description than what `String` type
-// provides.
-#[derive(Deserialize)]
-pub struct ResolvAddr(String);
-
-impl ::configure_me::parse_arg::ParseArg for ResolvAddr {
-    type Error = InvalidUtf8;
-
-    fn parse_arg(arg: &OsStr) -> std::result::Result<Self, Self::Error> {
-        Self::parse_owned_arg(arg.to_owned())
-    }
-
-    fn parse_owned_arg(arg: OsString) -> std::result::Result<Self, Self::Error> {
-        arg.into_string().map_err(InvalidUtf8).map(ResolvAddr)
-    }
-
-    fn describe_type<W: fmt::Write>(mut writer: W) -> fmt::Result {
-        write!(writer, "a network address (will be resolved if needed)")
-    }
-}
-
-impl ResolvAddr {
-    /// Resolves the address.
-    fn resolve(self) -> std::result::Result<SocketAddr, AddressError> {
-        match self.0.to_socket_addrs() {
-            Ok(mut iter) => iter.next().ok_or_else(|| AddressError::NoAddrError(self.0)),
-            Err(err) => Err(AddressError::ResolvError { addr: self.0, err }),
-        }
-    }
-
-    /// Resolves the address, but prints error and exits in case of failure.
-    fn resolve_or_exit(self) -> SocketAddr {
-        self.resolve().unwrap_or_else(|err| {
-            eprintln!("Error: {}", err);
-            std::process::exit(1)
-        })
     }
 }
 
@@ -139,9 +96,11 @@ pub struct Config {
     pub network_type: Network,
     pub db_path: PathBuf,
     pub daemon_dir: PathBuf,
-    pub daemon_rpc_addr: SocketAddr,
+    pub daemon_rpc_host: Ipv4Addr,
+    pub daemon_rpc_port: u16,
     pub cookie: Option<String>,
-    pub indexer_rpc_addr: SocketAddr,
+    pub indexer_rpc_host: Ipv4Addr,
+    pub indexer_rpc_port: u16,
     pub jsonrpc_import: bool,
     pub index_batch_size: usize,
     pub bulk_index_threads: usize,
@@ -195,20 +154,30 @@ impl Config {
         };
 
         let default_indexer_port = match config.network {
-            Network::Bitcoin => 50001,
-            Network::Testnet => 60001,
-            Network::Regtest => 60401,
+            Network::Bitcoin => 8432,
+            Network::Testnet => 18432,
+            Network::Regtest => 18543,
         };
 
-        let daemon_rpc_addr: SocketAddr = config.daemon_rpc_addr.map_or(
-            (DEFAULT_SERVER_ADDRESS, default_daemon_port).into(),
-            ResolvAddr::resolve_or_exit,
-        );
+        let daemon_rpc_host = config
+            .daemon_rpc_host
+            .unwrap_or(DEFAULT_SERVER_ADDRESS.into());
+        let daemon_rpc_port = config.daemon_rpc_port.unwrap_or(default_daemon_port);
 
-        let indexer_rpc_addr: SocketAddr = config.indexer_rpc_addr.map_or(
-            (DEFAULT_SERVER_ADDRESS, default_indexer_port).into(),
-            ResolvAddr::resolve_or_exit,
-        );
+        let indexer_rpc_host = config
+            .indexer_rpc_host
+            .unwrap_or(DEFAULT_SERVER_ADDRESS.into());
+        let indexer_rpc_port = config.indexer_rpc_port.unwrap_or(default_indexer_port);
+
+        // let daemon_rpc_addr: SocketAddr = config.daemon_rpc_addr.map_or(
+        //     (DEFAULT_SERVER_ADDRESS, default_daemon_port).into(),
+        //     ResolvAddr::resolve_or_exit,
+        // );
+
+        // let indexer_rpc_addr: SocketAddr = config.indexer_rpc_addr.map_or(
+        //     (DEFAULT_SERVER_ADDRESS, default_indexer_port).into(),
+        //     ResolvAddr::resolve_or_exit,
+        // );
 
         match config.network {
             Network::Bitcoin => (),
@@ -248,9 +217,11 @@ impl Config {
             network_type: config.network,
             db_path: config.db_dir,
             daemon_dir: config.daemon_dir,
-            daemon_rpc_addr,
+            daemon_rpc_host,
+            daemon_rpc_port,
+            indexer_rpc_host,
+            indexer_rpc_port,
             cookie: config.cookie,
-            indexer_rpc_addr,
             jsonrpc_import: config.jsonrpc_import,
             index_batch_size: config.index_batch_size,
             bulk_index_threads: config.bulk_index_threads,
