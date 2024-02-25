@@ -169,16 +169,6 @@ impl Config {
             .unwrap_or(DEFAULT_SERVER_ADDRESS.into());
         let indexer_rpc_port = config.indexer_rpc_port.unwrap_or(default_indexer_port);
 
-        // let daemon_rpc_addr: SocketAddr = config.daemon_rpc_addr.map_or(
-        //     (DEFAULT_SERVER_ADDRESS, default_daemon_port).into(),
-        //     ResolvAddr::resolve_or_exit,
-        // );
-
-        // let indexer_rpc_addr: SocketAddr = config.indexer_rpc_addr.map_or(
-        //     (DEFAULT_SERVER_ADDRESS, default_indexer_port).into(),
-        //     ResolvAddr::resolve_or_exit,
-        // );
-
         match config.network {
             Network::Bitcoin => (),
             Network::Testnet => config.daemon_dir.push("testnet3"),
