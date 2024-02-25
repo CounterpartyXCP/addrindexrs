@@ -219,7 +219,7 @@ impl Config {
             txid_limit: config.txid_limit,
         };
 
-        eprintln!("{:?}", config);
+        eprintln!("{:#?}", config);
         config
     }
 
