@@ -5,10 +5,10 @@ extern crate error_chain;
 extern crate log;
 
 use error_chain::ChainedError;
+use std::net::{IpAddr, SocketAddr};
 use std::process;
 use std::sync::Arc;
 use std::time::Duration;
-
 
 use addrindexrs::{
     app::App,
@@ -30,7 +30,7 @@ fn run_server(config: &Config) -> Result<()> {
 
     let daemon = Daemon::new(
         &config.daemon_dir,
-        config.daemon_rpc_addr,
+        SocketAddr::new(IpAddr::V4(config.daemon_rpc_host), config.daemon_rpc_port),
         config.cookie_getter(),
         config.network_type,
         signal.clone(),
@@ -42,18 +42,17 @@ fn run_server(config: &Config) -> Result<()> {
     let index = Index::load(&store, &daemon, config.index_batch_size)?;
 
     let store = if is_fully_compacted(&store) {
-         // initial import and full compaction are over
+        // initial import and full compaction are over
         store
     } else if config.jsonrpc_import {
-         // slower: uses JSONRPC for fetching blocks
+        // slower: uses JSONRPC for fetching blocks
         index.update(&store, &signal)?;
         full_compaction(store)
     } else {
         // faster, but uses more memory
-        let store =
-            bulk::index_blk_files(&daemon, config.bulk_index_threads, &signal, store)?;
+        let store = bulk::index_blk_files(&daemon, config.bulk_index_threads, &signal, store)?;
         let store = full_compaction(store);
-         // make sure the block header index is up-to-date
+        // make sure the block header index is up-to-date
         index.reload(&store);
         store
     }
@@ -66,13 +65,17 @@ fn run_server(config: &Config) -> Result<()> {
     loop {
         app.update(&signal)?;
         query.update_mempool()?;
-        server.get_or_insert_with(|| RPC::start(config.indexer_rpc_addr, query.clone()));
+        server.get_or_insert_with(|| {
+            RPC::start(
+                SocketAddr::new(IpAddr::V4(config.indexer_rpc_host), config.indexer_rpc_port),
+                query.clone(),
+            )
+        });
         if let Err(err) = signal.wait(Duration::from_secs(5)) {
-            info!("stopping server: {}", err);
-            break;
+            info!("stopping servertest: {}", err);
+            process::exit(1);
         }
     }
-    Ok(())
 }
 
 fn main() {

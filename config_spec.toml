@@ -41,14 +41,24 @@ doc = "Select Bitcoin network type ('mainnet', 'testnet' or 'regtest')"
 default = "Default::default()"
 
 [[param]]
-name = "indexer_rpc_addr"
-type = "crate::config::ResolvAddr"
-doc = "Indexer JSONRPC 'addr:port' to listen on (default: '127.0.0.1:50001' for mainnet, '127.0.0.1:60001' for testnet and '127.0.0.1:60401' for regtest)"
+name = "indexer_rpc_host"
+type = "std::net::Ipv4Addr"
+doc = "Indexer JSONRPC 'host' to listen on (default: '127.0.0.1' for mainnet, '127.0.0.1' for testnet and '127.0.0.1' for regtest)"
 
 [[param]]
-name = "daemon_rpc_addr"
-type = "crate::config::ResolvAddr"
-doc = "Bitcoin daemon JSONRPC 'addr:port' to connect (default: 127.0.0.1:8332 for mainnet, 127.0.0.1:18332 for testnet and 127.0.0.1:18443 for regtest)"
+name = "indexer_rpc_port"
+type = "u16"
+doc = "Indexer JSONRPC 'port' to listen on (default: '50001' for mainnet, '60001' for testnet and '60401' for regtest)"
+
+[[param]]
+name = "daemon_rpc_host"
+type = "std::net::Ipv4Addr"
+doc = "Bitcoin daemon JSONRPC 'host' to connect (default: 127.0.0.1 for mainnet, 127.0.0.1 for testnet and 127.0.0.1 for regtest)"
+
+[[param]]
+name = "daemon_rpc_port"
+type = "u16"
+doc = "Bitcoin daemon JSONRPC 'port' to listen on (default: 8332 for mainnet, 18332 for testnet and 18443 for regtest)"
 
 [[switch]]
 name = "jsonrpc_import"
