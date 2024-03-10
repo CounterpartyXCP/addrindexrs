@@ -12,8 +12,7 @@ WORKDIR /home/user
 COPY . .
 
 # Build the application
-RUN cargo build --release
-RUN mv /home/user/target/release/addrindexrs /usr/local/bin/
+RUN cargo install --path=.
 
 ENTRYPOINT [ "addrindexrs" ]
 
