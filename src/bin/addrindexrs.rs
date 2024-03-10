@@ -59,7 +59,8 @@ fn run_server(config: &Config) -> Result<()> {
     .enable_compaction(); // enable auto compactions before starting incremental index updates.
 
     let app = App::new(store, index, daemon)?;
-    let query = Query::new(app.clone(), config.txid_limit);
+    //let query = Query::new(app.clone(), config.txid_limit);
+    let query = Query::new(app.clone(), 100);
 
     let mut server = None; // Indexer RPC server
     loop {
