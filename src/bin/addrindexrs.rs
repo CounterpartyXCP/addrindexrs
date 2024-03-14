@@ -63,14 +63,14 @@ fn run_server(config: &Config) -> Result<()> {
 
     let mut server = None; // Indexer RPC server
     loop {
-        app.update(&signal)?;
-        query.update_mempool()?;
         server.get_or_insert_with(|| {
             RPC::start(
                 SocketAddr::new(IpAddr::V4(config.indexer_rpc_host), config.indexer_rpc_port),
                 query.clone(),
             )
         });
+        app.update(&signal)?;
+        query.update_mempool()?;
         if let Err(err) = signal.wait(Duration::from_secs(5)) {
             info!("stopping servertest: {}", err);
             process::exit(1);
