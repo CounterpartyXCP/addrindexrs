@@ -96,7 +96,7 @@ impl Connection {
                     return Err("bad block_index".into());
                 }
             },
-            None => return Err("bad block_index".into())
+            None => 9999999999,
         };
         let oldest_tx = self.query.oldest_tx(&script_hash[..], current_block_index)?;
         Ok(json!({"tx_hash":oldest_tx.txid.to_hex(),"block_index":oldest_tx.blockindex}))
