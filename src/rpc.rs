@@ -76,7 +76,7 @@ impl Connection {
 
     fn blockchain_scripthash_get_history(&self, params: &[Value]) -> Result<Value> {
         let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
-        let status = self.query.status(&script_hash[..])?;
+        let status = self.query.status(&script_hash[..], 9999999999)?;
         Ok(json!(Value::Array(
             status
                 .history()
@@ -88,13 +88,23 @@ impl Connection {
 
     fn blockchain_scripthash_get_oldest_tx(&self, params: &[Value]) -> Result<Value> {
         let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
-        let oldest_tx = self.query.oldest_tx(&script_hash[..])?;
+        let current_block_index = match params.get(1) {
+            Some(value) => {
+                if let Some(int_value) = value.as_u64() {
+                    int_value as usize
+                } else {
+                    return Err("bad block_index".into());
+                }
+            },
+            None => 9999999999,
+        };
+        let oldest_tx = self.query.oldest_tx(&script_hash[..], current_block_index)?;
         Ok(json!({"tx_hash":oldest_tx.txid.to_hex(),"block_index":oldest_tx.blockindex}))
     }
 
     fn blockchain_scripthash_get_utxos(&self, params: &[Value]) -> Result<Value> {
         let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
-        let status = self.query.status(&script_hash[..])?;
+        let status = self.query.status(&script_hash[..], 9999999999)?;
 
         let mut dict = HashMap::new();
         for item in status.funding().into_iter() {

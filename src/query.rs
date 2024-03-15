@@ -191,6 +191,7 @@ impl Query {
         &self,
         store: &dyn ReadStore,
         txo: &Txo,
+        current_block_index: usize
     ) -> Result<Option<SpendingInput>> {
 
         let mut spendings = vec![];
@@ -203,7 +204,9 @@ impl Query {
                 Ok(header) => header.height(),
                 Err(_error) => 0
             };
-    
+            if block_index > current_block_index {
+                continue;
+            }
             spendings.push(SpendingInput {
                 txid: deserialize(&txrow.key.txid).unwrap(),
                 outpoint: (txo.txid, txo.vout),
@@ -223,7 +226,8 @@ impl Query {
     fn find_funding_outputs(
         &self,
         store: &dyn ReadStore,
-        script_hash: &[u8]
+        script_hash: &[u8],
+        current_block_index: usize
     ) -> Result<Vec<Txo>> {
         let txout_rows = self.get_txoutrows_by_script_hash(store, script_hash);
 
@@ -238,7 +242,9 @@ impl Query {
                     Ok(header) => header.height(),
                     Err(_error) => 0
                 };
-                    
+                if block_index > current_block_index {
+                    continue;
+                }
                 result.push(Txo {
                     txid: deserialize(&txrow.key.txid).unwrap(),
                     vout: row.vout as usize,
@@ -253,12 +259,13 @@ impl Query {
     fn confirmed_status(
         &self,
         script_hash: &[u8],
+        current_block_index: usize
     ) -> Result<(Vec<Txo>, Vec<SpendingInput>)> {
         let mut funding = vec![];
         let mut spending = vec![];
         let read_store = self.app.read_store();
 
-        let txos = self.find_funding_outputs(read_store, script_hash)?;
+        let txos = self.find_funding_outputs(read_store, script_hash, current_block_index)?;
         if self.txid_limit > 0 && txos.len() > self.txid_limit {
             bail!(
                 "{}+ transactions found, query may take a long time",
@@ -268,7 +275,7 @@ impl Query {
         funding.extend(txos);
 
         for txo in &funding {
-            if let Some(spent) = self.find_spending_input(read_store, &txo)? {
+            if let Some(spent) = self.find_spending_input(read_store, &txo, current_block_index)? {
                 spending.push(spent);
             }
         }
@@ -286,7 +293,7 @@ impl Query {
 
         let tracker = self.tracker.read().unwrap();
 
-        let txos = self.find_funding_outputs(tracker.index(), script_hash)?;
+        let txos = self.find_funding_outputs(tracker.index(), script_hash, 9999999999)?;
         if self.txid_limit > 0 && txos.len() > self.txid_limit {
             bail!(
                 "{}+ transactions found, query may take a long time",
@@ -296,7 +303,7 @@ impl Query {
         funding.extend(txos);
 
         for txo in funding.iter().chain(confirmed_funding.iter()) {
-            if let Some(spent) = self.find_spending_input(tracker.index(), &txo)? {
+            if let Some(spent) = self.find_spending_input(tracker.index(), &txo, 9999999999)? {
                 spending.push(spent);
             }
         }
@@ -304,9 +311,9 @@ impl Query {
         Ok((funding, spending))
     }
 
-    pub fn status(&self, script_hash: &[u8]) -> Result<Status> {
+    pub fn status(&self, script_hash: &[u8], current_block_index: usize) -> Result<Status> {
         let confirmed = self
-            .confirmed_status(script_hash)
+            .confirmed_status(script_hash, current_block_index)
             .chain_err(|| "failed to get confirmed status")?;
 
         let mempool = self
@@ -316,8 +323,8 @@ impl Query {
         Ok(Status { confirmed, mempool })
     }
     
-    pub fn oldest_tx(&self, script_hash: &[u8]) -> Result<TxBlockIndex> {
-        let all_status = self.status(script_hash).unwrap();
+    pub fn oldest_tx(&self, script_hash: &[u8], current_block_index: usize) -> Result<TxBlockIndex> {
+        let all_status = self.status(script_hash, current_block_index).unwrap();
         
         all_status.oldest().chain_err(|| "no txs for address")
     }
