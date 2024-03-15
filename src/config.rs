@@ -104,7 +104,6 @@ pub struct Config {
     pub jsonrpc_import: bool,
     pub index_batch_size: usize,
     pub bulk_index_threads: usize,
-    pub txid_limit: usize,
     pub blocktxids_cache_size: usize,
 }
 
@@ -216,7 +215,6 @@ impl Config {
             index_batch_size: config.index_batch_size,
             bulk_index_threads: config.bulk_index_threads,
             blocktxids_cache_size: (config.blocktxids_cache_size_mb * MB) as usize,
-            txid_limit: config.txid_limit,
         };
 
         eprintln!("{:#?}", config);

@@ -81,9 +81,3 @@ name = "blocktxids_cache_size_mb"
 type = "f32"
 doc = "Total size of block transactions IDs to cache (in MB)"
 default = "10.0"
-
-[[param]]
-name = "txid_limit"
-type = "usize"
-doc = "Number of transactions to lookup before returning an error, to prevent 'too popular' addresses from causing the RPC server to get stuck (0 - disable the limit)"
-default = "100"
