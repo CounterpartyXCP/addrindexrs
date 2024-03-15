@@ -8,6 +8,26 @@
 - [v0.2.0](#0_2_0)
 - [v0.1.0](#0_1_0)
 
+<a name="0_4_3"/>
+
+## addrindexrs v0.4.3 ##
+
+### Change log ###
+
+- Pretty print config on startup.
+- Split addr options into host and port.
+- Upgrade rocksdb to 0.22.0.
+- Remove `txid_limit` parameter.
+- Add`current_block_index` argument to `get_oldest_tx` function.
+- Upgrade Docker file and documentation.
+
+
+#### Credits ###
+
+- Warren Puffet
+- Adam Krellenstein
+- Ouziel Slama
+
 
 <a name="0_4_0"/>
 
