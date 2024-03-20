@@ -5,7 +5,7 @@ extern crate error_chain;
 extern crate log;
 
 use error_chain::ChainedError;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::process;
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,13 +24,18 @@ use addrindexrs::{
     store::{full_compaction, is_fully_compacted, DBStore},
 };
 
+
+
 fn run_server(config: &Config) -> Result<()> {
     let signal = Waiter::start();
     let blocktxids_cache = Arc::new(BlockTxIDsCache::new(config.blocktxids_cache_size));
 
+    let daemon_rpc = config.daemon_rpc_host.as_str().to_owned() + ":" + &config.daemon_rpc_port.to_string();
+
     let daemon = Daemon::new(
         &config.daemon_dir,
-        SocketAddr::new(IpAddr::V4(config.daemon_rpc_host), config.daemon_rpc_port),
+        daemon_rpc.as_str().to_socket_addrs().unwrap().next().unwrap(),
+        //SocketAddr::new(config.daemon_rpc_host, config.daemon_rpc_port),
         config.cookie_getter(),
         config.network_type,
         signal.clone(),

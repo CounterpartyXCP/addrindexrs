@@ -18,6 +18,7 @@ use crate::errors::*;
 // Default IP address of the RPC server
 //
 const DEFAULT_SERVER_ADDRESS: [u8; 4] = [127, 0, 0, 1]; // by default, serve on IPv4 localhost
+const DEFAULT_SERVER_ADDRESS_STRING: &str = "127.0.0.1"; // by default, serve on IPv4 localhost
 
 mod internal {
     #![allow(unused)]
@@ -96,7 +97,7 @@ pub struct Config {
     pub network_type: Network,
     pub db_path: PathBuf,
     pub daemon_dir: PathBuf,
-    pub daemon_rpc_host: Ipv4Addr,
+    pub daemon_rpc_host: String,
     pub daemon_rpc_port: u16,
     pub cookie: Option<String>,
     pub indexer_rpc_host: Ipv4Addr,
@@ -160,7 +161,7 @@ impl Config {
 
         let daemon_rpc_host = config
             .daemon_rpc_host
-            .unwrap_or(DEFAULT_SERVER_ADDRESS.into());
+            .unwrap_or(DEFAULT_SERVER_ADDRESS_STRING.into());
         let daemon_rpc_port = config.daemon_rpc_port.unwrap_or(default_daemon_port);
 
         let indexer_rpc_host = config

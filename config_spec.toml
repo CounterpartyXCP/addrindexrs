@@ -52,7 +52,7 @@ doc = "Indexer JSONRPC 'port' to listen on (default: '50001' for mainnet, '60001
 
 [[param]]
 name = "daemon_rpc_host"
-type = "std::net::Ipv4Addr"
+type = "String"
 doc = "Bitcoin daemon JSONRPC 'host' to connect (default: 127.0.0.1 for mainnet, 127.0.0.1 for testnet and 127.0.0.1 for regtest)"
 
 [[param]]
