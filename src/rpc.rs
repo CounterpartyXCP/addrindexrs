@@ -76,7 +76,7 @@ impl Connection {
 
     fn blockchain_scripthash_get_history(&self, params: &[Value]) -> Result<Value> {
         let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
-        let status = self.query.status(&script_hash[..], 9999999999)?;
+        let status = self.query.status(&script_hash[..], 9999999999, false)?;
         Ok(json!(Value::Array(
             status
                 .history()
@@ -104,7 +104,7 @@ impl Connection {
 
     fn blockchain_scripthash_get_utxos(&self, params: &[Value]) -> Result<Value> {
         let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
-        let status = self.query.status(&script_hash[..], 9999999999)?;
+        let status = self.query.status(&script_hash[..], 9999999999, false)?;
 
         let mut dict = HashMap::new();
         for item in status.funding().into_iter() {
