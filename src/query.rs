@@ -259,14 +259,15 @@ impl Query {
     fn confirmed_status(
         &self,
         script_hash: &[u8],
-        current_block_index: usize
+        current_block_index: usize,
+        use_txid_limit: bool,
     ) -> Result<(Vec<Txo>, Vec<SpendingInput>)> {
         let mut funding = vec![];
         let mut spending = vec![];
         let read_store = self.app.read_store();
 
         let txos = self.find_funding_outputs(read_store, script_hash, current_block_index)?;
-        if self.txid_limit > 0 && txos.len() > self.txid_limit {
+        if use_txid_limit && self.txid_limit > 0 && txos.len() > self.txid_limit {
             bail!(
                 "{}+ transactions found, query may take a long time",
                 txos.len()
@@ -287,6 +288,7 @@ impl Query {
         &self,
         script_hash: &[u8],
         confirmed_funding: &[Txo],
+        use_txid_limit: bool,
     ) -> Result<(Vec<Txo>, Vec<SpendingInput>)> {
         let mut funding = vec![];
         let mut spending = vec![];
@@ -294,7 +296,7 @@ impl Query {
         let tracker = self.tracker.read().unwrap();
 
         let txos = self.find_funding_outputs(tracker.index(), script_hash, 9999999999)?;
-        if self.txid_limit > 0 && txos.len() > self.txid_limit {
+        if use_txid_limit && self.txid_limit > 0 && txos.len() > self.txid_limit {
             bail!(
                 "{}+ transactions found, query may take a long time",
                 txos.len()
@@ -311,20 +313,20 @@ impl Query {
         Ok((funding, spending))
     }
 
-    pub fn status(&self, script_hash: &[u8], current_block_index: usize) -> Result<Status> {
+    pub fn status(&self, script_hash: &[u8], current_block_index: usize, use_txid_limit: bool) -> Result<Status> {
         let confirmed = self
-            .confirmed_status(script_hash, current_block_index)
+            .confirmed_status(script_hash, current_block_index, use_txid_limit)
             .chain_err(|| "failed to get confirmed status")?;
 
         let mempool = self
-            .mempool_status(script_hash, &confirmed.0)
+            .mempool_status(script_hash, &confirmed.0, use_txid_limit)
             .chain_err(|| "failed to get mempool status")?;
 
         Ok(Status { confirmed, mempool })
     }
     
     pub fn oldest_tx(&self, script_hash: &[u8], current_block_index: usize) -> Result<TxBlockIndex> {
-        let all_status = self.status(script_hash, current_block_index).unwrap();
+        let all_status = self.status(script_hash, current_block_index, true).unwrap();
         
         all_status.oldest().chain_err(|| "no txs for address")
     }
