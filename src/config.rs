@@ -71,7 +71,11 @@ impl FromStr for BitcoinNetwork {
     type Err = <Network as FromStr>::Err;
 
     fn from_str(string: &str) -> std::result::Result<Self, Self::Err> {
-        Network::from_str(string).map(BitcoinNetwork)
+        match string {
+            "main" => Network::from_str("bitcoin").map(BitcoinNetwork),
+            "test" => Network::from_str("testnet").map(BitcoinNetwork),
+            _ => Network::from_str(string).map(BitcoinNetwork),
+        }
     }
 }
 
