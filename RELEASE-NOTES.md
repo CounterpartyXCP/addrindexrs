@@ -3,13 +3,29 @@
 
 ## Releases ##
 
-- [v0.4.4](#0_4_5)
+- [v0.4.6](#0_4_6)
+- [v0.4.5](#0_4_5)
 - [v0.4.4](#0_4_4)
 - [v0.4.3](#0_4_3)
 - [v0.4.0](#0_4_0)
 - [v0.3.0](#0_3_0)
 - [v0.2.0](#0_2_0)
 - [v0.1.0](#0_1_0)
+
+<a name="0_4_6"/>
+
+## addrindexrs v0.4.6 ##
+
+### Change log ###
+
+- Accept 'main' and 'test' for Network, like bitcoind and counterparty-core
+
+#### Credits ###
+
+- Warren Puffet
+- Adam Krellenstein
+- Ouziel Slama
+
 
 <a name="0_4_5"/>
 
