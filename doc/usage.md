@@ -34,7 +34,7 @@ Otherwise, [`~/.bitcoin/.cookie`](https://github.com/bitcoin/bitcoin/blob/021218
 
 First index sync should take ~1.5 hours (on a dual core Intel CPU @ 3.3 GHz, 8 GB RAM, 1TB WD Blue HDD):
 ```bash
-$ cargo run --release -- -vvv --timestamp --db-dir ./db --indexer-rpc-addr="127.0.0.1:8432"
+$ cargo run --release -- -vvv --timestamp --db-dir ./db --indexer-rpc-host="127.0.0.1" --indexer-rpc-post="8432"
 2018-08-17T18:27:42 - INFO - NetworkInfo { version: 179900, subversion: "/Satoshi:0.17.99/" }
 2018-08-17T18:27:42 - INFO - BlockchainInfo { chain: "main", blocks: 537204, headers: 537204, bestblockhash: "0000000000000000002956768ca9421a8ddf4e53b1d81e429bd0125a383e3636", pruned: false, initialblockdownload: false }
 2018-08-17T18:27:42 - DEBUG - opening DB at "./db/mainnet"
@@ -64,7 +64,7 @@ Note that the final DB size should be ~20% of the `blk*.dat` files, but it may i
 If initial sync fails due to `memory allocation of xxxxxxxx bytes failedAborted` errors, as may happen on devices with limited RAM, try the following arguments when starting `addrindexrs`. It should take roughly 18 hours to sync and compact the index on an ODROID-HC1 with 8 CPU cores @ 2GHz, 2GB RAM, and an SSD using the following command:
 
 ```bash
-$ cargo run --release -- -vvvv --index-batch-size=10 --jsonrpc-import --db-dir ./db --indexer-rpc-addr="127.0.0.1:8432"
+$ cargo run --release -- -vvvv --index-batch-size=10 --jsonrpc-import --db-dir ./db --indexer-rpc-host="127.0.0.1" --indexer-rpc-post="8432"
 ```
 
 The index database is stored here:
@@ -83,7 +83,8 @@ $ docker run --rm -d \
     --name indexer \
     --network="host" \
     addrindexrs \
-    -vvv --daemon-rpc-addr="127.0.0.1:8332" \
+    -vvv --daemon-rpc-host="127.0.0.1" \
+    --daemon-rpc-port="8332" \
     --cookie="bitcoinrpc:rpc"
 ```
 
@@ -174,7 +175,7 @@ After=bitcoind.service
 
 [Service]
 WorkingDirectory=/home/bitcoin/addrindexrs
-ExecStart=/home/bitcoin/addrindexrs/target/release/addrindexrs --db-dir ./db --indexer-rpc-addr="127.0.0.1:8432"
+ExecStart=/home/bitcoin/addrindexrs/target/release/addrindexrs --db-dir ./db --indexer-rpc-host="127.0.0.1" --indexer-rpc-post="8432"
 User=bitcoin
 Group=bitcoin
 Type=simple
